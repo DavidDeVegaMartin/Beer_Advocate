@@ -1,0 +1,2507 @@
+---
+title: 'Beer Advocate Data Analysis'
+author: "Autor: David de Vega Martin [ddevega@uoc.edu]."
+output:
+  pdf_document:
+    highlight: zenburn
+    toc: yes
+  word_document: default
+  html_document:
+    highlight: default
+    number_sections: yes
+    theme: cosmo
+    toc: yes
+    toc_depth: 3
+    includes:
+      in_header: 75.584-PEC1_06.html
+    fig_width: 6  # Ajusta el ancho de los gráficos en pulgadas
+    fig_height: 4  # Ajusta el alto de los gráficos en pulgadas
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+\newpage 
+
+# Actuaciones Previas
+
+## Carga de librerias
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+if (!require('ggplot2')) install.packages('ggplot2'); library('ggplot2')
+if (!require('dplyr')) install.packages('dplyr'); library('dplyr')
+if (!require('tidyverse')) install.packages('tidyverse');library('tidyverse')
+if (!require('grid')) install.packages('grid');library('grid')
+if (!require('lattice')) install.packages('lattice');library('lattice')
+if (!require('scales')) install.packages('scales');library('scales')
+if (!require('knitr')) install.packages('knitr');library('knitr')
+if (!require('gplots')) install.packages('gplots');library('gplots')
+if (!require('gmodels')) install.packages('gmodels');library ('gmodels')
+if (!require('data.table')) install.packages('data.table');library('data.table')
+if (!require('readxl')) install.packages('readxl');library('readxl')
+if (!require('corrplot')) install.packages('corrplot');library('corrplot')
+if (!require('pander')) install.packages('pander');library('pander')
+if (!require('gridExtra')) install.packages('gridExtra');library('gridExtra')
+if (!require('cowplot')) install.packages('cowplot');library('cowplot')
+if (!require('ggrepel')) install.packages('ggrepel');library('ggrepel') 
+```
+
+\newpage 
+## Funciones
+
+### **Custom_barplot**
+
+```{r}
+custom_barplot <- function(df, my_variable, n_items, title_x, title_y, 
+                           title = "Title") {
+  # Group and count the elements of the given variable, 
+  # sorted in descending order
+  var_grouped <- df %>%
+    group_by({{ my_variable }}) %>%
+    count({{ my_variable }}, sort = TRUE)
+  
+  # Select the top 'n_items' elements
+  top_var_grouped_review <- head(var_grouped, n_items)
+  
+  # Calculate the percentage of occurrences for each element
+  top_var_grouped_review$perc_my_variable <- round(100*
+            ( top_var_grouped_review$n / sum(top_var_grouped_review$n)), 2)
+
+  # Create the bar plot using 'ggplot2'
+  plot <- ggplot(data = top_var_grouped_review,
+         aes(y = reorder({{ my_variable }}, n),
+             x = n)
+  ) +
+    geom_bar(stat = "identity", fill = "dodgerblue4") +
+    geom_text(aes(label = paste(n, " - ", perc_my_variable, "%")),
+              vjust = 0.5, hjust = 1, color = "white") +
+    labs(x = title_x, y = title_y, title = title) +  
+    theme_minimal() 
+  return(plot)
+}
+```
+
+###  **plot_boxplot_attributes**
+
+
+```{r}
+plot_boxplot_attributes <- function(df, title = "Title", x_label = "Value",
+                                    y_label = "Variable") {
+  # Select fixed attribute columns
+  attributes <- df %>% 
+                      select(review_overall, review_aroma, review_appearance,
+                             review_palate, review_taste)
+  
+  # Convert the data to long (tidy) format
+  tidy_data <- tidyr::gather(attributes, key = "Variable", value = "Value")
+  
+  # Create the boxplot
+  ggplot(tidy_data, aes(x = Value, y = Variable, fill = Variable)) +
+    geom_boxplot() +
+    scale_fill_manual(values = rainbow(length(unique(tidy_data$Variable)))) +
+    theme_minimal() +
+    labs(title = title, x = x_label, y = y_label) +
+    theme(legend.position = "bottom")
+}
+
+```
+
+
+### **stacked_barplot_custom**
+
+```{r}
+
+stacked_barplot_custom <- function(original_table, variable1, variable2, n, 
+                                   Title = "Title") {
+  # Summarize data by levels.
+  original_table_summed <- original_table %>%
+    group_by(!!sym(variable1), !!sym(variable2)) %>%
+    summarise(units = sum(!!sym(n)), .groups = 'drop') 
+
+  # Calculate percentages
+  original_table_summed_percent <- original_table_summed %>%
+    group_by(!!sym(variable1)) %>%
+    mutate(percentage = units / sum(units) * 100)
+
+  # Stacked bar plot with percentages (horizontal)
+  plot <- ggplot(original_table_summed_percent,
+                 aes(fill = !!sym(variable2), x = units,
+                     y = !!sym(variable1))) +
+    geom_bar(position = "fill", stat = "identity") +
+    geom_text(aes(label = paste0(round(percentage), "%")),
+              position = position_fill(vjust = 0.5), color = "white") +
+    labs(x = "Total", y = variable1, fill = variable2, title = Title) +  
+    theme_minimal() +
+    theme(axis.text.y = element_text(angle = 0, hjust = 1))
+  
+  return(plot)
+}
+
+
+
+```
+
+### **stacked_barplot_custom_evo**
+```{r}
+stacked_barplot_custom_evo <- 
+  function(original_table, variable1, variable2, titulo, list_levels) {
+  # Tranform table to dataframe
+  df_table <- as.data.frame.matrix(original_table)
+
+  # Convert data to long format and calculate relative frequency
+  df_table_long <- df_table %>%
+    rownames_to_column(var = "variable1") %>%
+    gather(key = "variable2", value = "unidades", -variable1) %>%
+    mutate(variable2 = factor(variable2, levels = list_levels)) %>%
+    group_by(variable1) %>%
+    mutate(percentage = unidades / sum(unidades) * 100,
+           label = sprintf("%d", round(percentage)))
+
+  # Create graph.
+  plot <-
+    ggplot(df_table_long, aes(x = percentage/100, y = variable1,
+                              fill = variable2)) +
+    geom_bar(stat = "identity", position = "stack") +
+    scale_fill_manual(values = scales::brewer_pal(palette = "Set3")
+                      (length(list_levels))) +  # Utilizar paleta Set3
+    labs(title = titulo, x = "Porcentaje", y = variable1) +
+    theme_minimal() +
+    theme(legend.position = "bottom", text = element_text(size = 8)) +
+    scale_x_continuous(labels = scales::percent_format()) +
+    geom_text(aes(label = label), position = position_stack(vjust = 0.5),
+              size = 3)
+  
+  return(plot)
+}
+```
+
+### **calcular_valores_cerveza**
+```{r}
+calcular_valores_cerveza <- function(beer_list) {
+  
+  # Calculate values n_distinct and generate table
+  pander(data.frame(
+    Descripcion = c("Total Cervezas",
+                    "Tipos de Cerveza",
+                    "Subtipos de Cerveza",
+                    "Total de Usuarios",
+                    "Total de Empresas"),
+    Valor = c(n_distinct(beer_list$beer_beerid), 
+              n_distinct(beer_list$beer_type),
+              n_distinct(beer_list$beer_style), 
+              n_distinct(beer_list$review_profilename), 
+              n_distinct(beer_list$brewery_name))
+  ))
+}
+
+```
+
+### **count_beers**
+```{r}
+count_beers <- function(data, families) {
+  # Filtrar dataframe
+  df_others <- data %>%
+    filter(beer_families == families)
+  
+  # Count number of beers by type and style 
+  df_count <- df_others %>%
+    group_by(beer_types, beer_style) %>%
+    # Use .groups = 'drop' to ungroup
+    summarise(`Total Cervezas` = n_distinct(beer_beerid), .groups = 'drop') 
+  
+  # Calculate Total of beer
+  total_others <- sum(df_count$`Total Cervezas`)
+  
+  # Calculate % and round
+  df_count <- df_count %>%
+    mutate(`% Total` = round((`Total Cervezas` / total_others) * 100, 2))
+  
+  # First, sort alphabetically by beer_types, then alphabetically by beer_styles,
+  # and finally by Total Beers in descending order within each group.
+  
+  df_count <- df_count %>%
+    arrange(beer_types, desc(`Total Cervezas`), beer_style)
+  
+  # Convert the tibble into a data.frame
+  df_result <- as.data.frame(df_count)
+  
+  # Return the data.frame instead of the kable table
+
+  return(df_result)
+}
+```
+
+### **count_beers_summary**
+```{r}
+count_beers_summary <- function(data, title = "title") {
+  # Do not filter the data frame; use all the data
+  df_others <- data
+  
+  # Count the number of beers by beer family and beer type
+  df_count <- df_others %>%
+    group_by(beer_families, beer_types) %>%
+    summarise(`Total Beers` = n_distinct(beer_beerid), .groups = 'drop') 
+  
+  # Calculate the total number of beers
+  total_others <- sum(df_count$`Total Beers`)
+  
+  # Calculate the percentage and round to two decimals
+  df_count <- df_count %>%
+    mutate(`% Total` = round((`Total Beers` / total_others) * 100, 2))
+  
+  # Sort first by beer_families, then by beer_types, 
+  # and finally by Total Beers in descending order within each group.
+  df_count <- df_count %>%
+    arrange(beer_families, beer_types, desc(`Total Beers`)) %>%
+    arrange(beer_families, desc(`Total Beers`), beer_types)
+  
+  # Convert tibble to data.frame
+  df_result <- as.data.frame(df_count)
+  
+  # Create the plot
+  plot <- ggplot(df_result, aes(x = reorder(beer_types, `Total Beers`), 
+                                y = `Total Beers`, fill = beer_families)) +
+    geom_bar(stat = "identity") +
+    geom_text(aes(label = paste(`Total Beers`, "(", `% Total`, "%)", sep = "")), 
+              position = position_nudge(y = 0.5),  
+              color = "black", size = 3.5) +  
+    labs(title = title,  # Title is now passed as a parameter
+         x = "Beer Type",
+         y = "Total Beers") +
+    theme_minimal() +
+    theme(legend.position = "right") +
+    coord_flip()  # Change orientation to horizontal
+    # Adjust text size on the y-axis
+    theme(axis.text.y = element_text(size = 8))
+
+  # Return the plot
+  return(plot)
+}
+
+```
+
+### **plot_percentage_per_subcategory **
+```{r}
+plot_percentage_per_subcategory <- function(data, category, subcategory, title)
+  {
+  
+  # Group the data and calculate the percentage by subcategory
+  Tabla_per_category_subcategory <- data %>%
+    group_by(.data[[category]], .data[[subcategory]]) %>%
+    summarise(total_n = sum(n), .groups = "drop") %>% 
+    group_by(.data[[category]]) %>%
+    mutate(Porcentaje = (total_n / sum(total_n)) * 100)
+
+  # Create graph
+  plot <- ggplot(Tabla_per_category_subcategory, 
+                 aes(x = Porcentaje, y = reorder(.data[[subcategory]],
+                                                 Porcentaje),
+                     fill = .data[[category]])) +
+    geom_bar(stat = "identity", position = "stack") +
+    geom_text(aes(label = sprintf("%.1f%%", Porcentaje)),
+              position = position_stack(vjust = 0.5), size = 3) +
+    labs(title = title,
+         x = "Porcentaje",
+         y = subcategory) +
+    theme_minimal()
+
+  # Return graph
+  return(plot)
+}
+```
+
+###**donut_count**
+```{r}
+donut_count <- function(df, title = "Título") {
+  # Define fixed colors for beer families
+   fixed_colors <- c("Ale" = "#00A087", "Lager" = "#7876b1", "Others" = "#cd534c") 
+  
+  # Data from  level 0
+  lvl0 <- tibble(name = "Parent", count = 0, level = factor(0), fill = NA)
+  
+  # Level 1 - Add beer families and calculate percentage
+  lvl1 <- df %>%
+    group_by(beer_families) %>%
+    summarise(count = sum(count)) %>%
+    ungroup() %>%
+    mutate(level = factor(1),
+           fill = beer_families,
+           percentage = count / sum(count) * 100) %>%
+    arrange(desc(count)) %>%
+    mutate(fill = factor(fill, levels = names(fixed_colors)))
+  
+ # Level 2 - Add beer types and calculate percentage within each family
+  lvl2 <- df %>%
+    group_by(beer_families) %>%
+    mutate(total_family = sum(count)) %>%
+    ungroup() %>%
+    mutate(percentage = count / total_family * 100) %>%
+    select(name = beer_types, count, percentage, fill = beer_families) %>%
+    mutate(level = factor(2))
+  
+  # Order level 2 based in level 1
+  lvl2 <- lvl2 %>%
+    left_join(lvl1 %>% select(fill, count_family = count), by = "fill") %>%
+    arrange(fill, desc(count)) %>%
+    mutate(name = factor(name, levels = unique(name)))
+  
+  # Combine levels
+  data_combined <- bind_rows(lvl0, lvl1, lvl2)
+  
+  # Create graph
+  ggplot(data_combined, aes(x = level, y = count, fill = fill, alpha = level)) +
+    geom_col(width = 1, color = "gray90", linewidth = 0.25, position = position_stack()) +
+    geom_text(data = data_combined %>% filter(level == 1),
+              aes(label = paste0(fill, "\n", round(percentage, 1), "%")),
+              size = 3.5, position = position_stack(vjust = 0.5), color = "black") +
+    geom_text(data = data_combined %>% filter(level == 2),
+              aes(label = paste0(name, "\n", round(percentage, 1), "%")),
+              position = position_stack(vjust = 0.5), size = 2.5, color = "black") +
+    coord_polar(theta = "y") +
+    scale_alpha_manual(values = c("1" = 1, "2" = 0.7), guide = "none") +
+    scale_x_discrete(breaks = NULL) +
+    scale_y_continuous(breaks = NULL) +
+    scale_fill_manual(values = fixed_colors, guide = "none") + # Colores fijos
+    labs(x = NULL, y = NULL, title = title) +
+    theme_minimal() +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+
+```
+
+### **donut_total**
+```{r}
+donut_total <- function(df, title = "Title") {
+    # Custom color palette
+    fixed_colors <- c("Ale" = "#00A087", "Lager" = "#7876b1", "Others" = "#cd534c") 
+
+    # Count the number of beers (beer_beerid) by family and type
+    df_count <- df %>%
+        group_by(beer_families, beer_types) %>%
+        summarise(`Total Beers` = n_distinct(beer_beerid), .groups = 'drop') 
+
+    # Level 0 data
+    lvl0 <- tibble(name = "Parent", count = 0, level = factor(0), fill = NA)
+
+    # Level 1 - Aggregate beer families and calculate the total beers per family
+    lvl1 <- df_count %>%
+        group_by(beer_families) %>%
+        summarise(count = sum(`Total Beers`)) %>%
+        ungroup() %>%
+        mutate(level = factor(1),  # Ensure level is a factor
+               fill = beer_families) %>%
+        arrange(desc(count)) %>%
+        mutate(fill = factor(fill, levels = unique(fill)))  
+
+    # Level 2 - Add beer types and calculate the total beers within each family
+    lvl2 <- df_count %>%
+        group_by(beer_families, beer_types) %>%
+        summarise(count = sum(`Total Beers`), .groups = 'drop') %>%
+        mutate(level = factor(2), fill = beer_families)
+
+    # Sort level 2 based on level 1
+    lvl2 <- lvl2 %>%
+        left_join(lvl1 %>% select(fill, count_family = count), by = "fill") %>%
+        arrange(fill, desc(count)) %>%
+        mutate(name = factor(beer_types, levels = unique(beer_types)))  
+
+    # Combine levels
+    data_combined <- bind_rows(lvl0, lvl1, lvl2)
+
+    # Create the plot
+    ggplot(data_combined, aes(x = level, y = count, fill = fill, alpha = level)) +
+        geom_col(width = 1, color = "gray90", linewidth = 0.25, 
+                 position = position_stack()) +
+        
+        # Add labels at level 1 (beer families with total number of beers)
+        geom_text(data = data_combined %>% filter(level == 1), 
+                  aes(label = paste0(fill, "\n", count)), size = 3.5,
+                  position = position_stack(vjust = 0.5), color = "black") +
+        
+        # Add labels at level 2 (beer types with total number of beers within
+      #the family)
+        geom_text(data = data_combined %>% filter(level == 2), 
+                  aes(label = paste0(name, "\n", count)), 
+                  position = position_stack(vjust = 0.5), size = 2.5, 
+                  color = "black") +
+        
+        coord_polar(theta = "y") +
+        scale_alpha_manual(values = c("1" = 1, "2" = 0.7), guide = "none") +
+        scale_x_discrete(breaks = NULL) +
+        scale_y_continuous(breaks = NULL) +
+        
+        # Apply the custom color palette
+        scale_fill_manual(values = fixed_colors) +  
+        
+        labs(x = NULL, y = NULL, title = title) +
+        theme_minimal() +
+        theme(legend.position = "none",
+              plot.margin = margin(0, 0, 0, 0))  # Adjust margins
+}
+```
+
+### **donut_subcount**
+```{r}
+donut_subcount <- function(df, title = "Título") {
+ # Level 0 data (to initialize the combined data structure)
+  lvl0 <- tibble(name = "Parent", count = 0, level = factor(0), fill = NA)
+
+ # Level 1 - Aggregate beer families and calculate total percentage
+  lvl1 <- df %>%
+    group_by(beer_types) %>%
+    summarise(count = sum(count)) %>%
+    ungroup() %>%
+    mutate(level = factor(1),
+           fill = beer_types,
+           percentage = count / sum(count) * 100) %>%
+    arrange(desc(count))
+
+  # Level 2 - Aggregate beer types and calculate the % within each family
+  lvl2 <- df %>%
+    group_by(beer_types) %>%
+    mutate(total_family = sum(count)) %>%
+    ungroup() %>%
+    mutate(percentage = count / total_family * 100) %>%
+    select(name = beer_style, count, percentage, fill = beer_types) %>%
+    mutate(level = factor(2))
+
+  # Orden  level 2 based in level 1
+  lvl2 <- lvl2 %>%
+    left_join(lvl1 %>% select(fill, count_family = count), by = "fill") %>%
+    arrange(fill, desc(count)) %>%
+    mutate(name = factor(name, levels = unique(name)))
+
+  # Combine levels 0, 1 y 2
+  data_combined <- bind_rows(lvl0, lvl1, lvl2)
+
+  # Create gráph
+  ggplot(data_combined, aes(x = level, y = count, fill = fill, alpha = level)) +
+    geom_col(width = 1, color = "gray90", linewidth = 0.25, 
+             position = position_stack()) +
+    
+    # Labels for level 1 (beer families with name, total, and percentage)
+
+    geom_text(data = data_combined %>% filter(level == 1),
+             
+              aes(label = paste0(fill, "\n ", count,"\n", round(percentage, 1),
+                                 "%")),
+              size = 3.5, position = position_stack(vjust = 0.5),
+              color = "black") +
+    
+    # Labels for level 2 (beer types with name, total, and percentage)
+    geom_text(data = data_combined %>% filter(level == 2),
+              
+              aes(label = paste0(name, "\n ", count, "\n", round(percentage, 1),
+                                 "%")),
+              position = position_stack(vjust = 0.5), size = 2.5,
+              color = "black") +
+    
+    # Graph
+    coord_polar(theta = "y") +
+    
+    # Setting transparency and colors
+    scale_alpha_manual(values = c("1" = 1, "2" = 0.7), guide = "none") +
+    scale_x_discrete(breaks = NULL) +
+    scale_y_continuous(breaks = NULL) +
+    
+    # Apply a color palette (you can change it if you prefer another one)
+    scale_fill_brewer(palette = "Dark2") +
+  
+    # Label graphs
+    labs(x = NULL, y = NULL, title = title) +
+    
+    # Grpah style
+    theme_minimal() +
+    theme(legend.position = "none",
+          plot.margin = margin(0, 0, 0, 0))
+}
+```
+
+\newpage 
+## Carga y preprocesado del Dataset 
+
+Carga datos
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df<- read.csv('./beer_reviews.csv',stringsAsFactors = TRUE)
+```
+
+Estadisticas basicas
+```{r}
+summary(df)
+```
+\newpage 
+Tratamiento de valores vacios- NA
+```{r}
+ colSums(df =="")
+```
+
+```{r}
+ colSums(is.na(df))
+```
+
+```{r}
+df = df[complete.cases(df),]
+```
+
+```{r}
+df <- na.omit(df) 
+```
+
+```{r}
+df <- df[!(is.na(df$brewery_name)|(df$brewery_name) == "") ,]
+df <- df[!(is.na(df$review_profilename)|(df$review_profilename) == "") ,]
+```
+
+Resultados:
+
+beer_abv = 67785 registros NA.
+brewery_name = 15 registros con cadena vacia.
+review_profilename = 348 registros con cadena vacia.
+
+Se intenta reconstruir la informacion que deberian de contener esos registros, 
+buscandola en el resto del dataset. Como no es posible, y el dataset es muy 
+extenso, se eliminan, ya que no comprometen la integridad del mismo.
+
+Tras esto se elimiman aquellas reviews que esten duplicadas, esto es, 
+aquellos reviews_profile que examinen una misma cerveza en mas de una ocasion.
+
+```{r}
+
+df[!(duplicated(df[c("beer_beerid","review_profilename")]) | 
+     duplicated(df[c("beer_beerid","review_profilename")], 
+                fromLast = TRUE)), ] %>% nrow()
+```
+
+```{r}
+df %>% distinct(beer_beerid,review_profilename,.keep_all = TRUE) %>% nrow()
+```
+
+```{r}
+df <-distinct(df,beer_beerid,review_profilename,.keep_all = TRUE)
+```
+
+Eliminados las reviews duplicadas el dataset, se reduce hasta 1.504.037 
+observaciones.
+
+Se transforman a factores los atributos necesarios.
+
+```{r}
+df$brewery_name <-as.factor(df$brewery_name)
+df$review_profilename <-as.factor(df$review_profilename)
+df$beer_style <-as.factor(df$beer_style)
+df$beer_name <-as.factor(df$beer_name)
+```
+
+El aspecto del dataset previo al analisis es el siguiente:
+
+```{r}
+str(df)
+```
+Con estas actuaciones finaliza el pre-procesado.
+
+\newpage
+
+# Analisis preliminar
+## Introduccion : Composicion del dataset y descripcion de variables.
+
+El presente dataset llamado **“Beer Review”**, está formado por 1.586.614 
+instancias, tras el tratamiento 1.504.037.
+
+Un total de 13 atributos mediante los cuales se trata de  describir la calidad 
+de la cerveza en base a puntuaciones, subjetivas, efectuadas por distintos 
+usuarios.
+
+Estos usuarios se identifican mediante un nickname o nombre de perfil. La 
+calificacion se lleva a cabo mediante una agrupacion de tipos de cerveza asi 
+como de productoras de la misma.
+
+De este modo, pasamos a  describir brevemente los atributos que conforman el 
+dataset. Pueden agruparse en 4 categorias:
+
+* **1. Identificacion usuario foro:**
+  
+   + **review_time** (valor continuo de punto flotante): Fecha en la que el 
+  usuario realizo su evaluacion.
+  
+  + **review_profilename** (valor nominal alfanumérico): Nombre del usuario 
+  calificador.
+  
+  
+
+* **2. Identificacion empresa cervecera:**
+
+  + **brewery_id** (valor continuo numérico): Identificación de la cervecería 
+  productora.
+
+  + **brewery_name** (valor nominal): Nombre de la cervecería productora.
+
+
+
+* **3. Revision de la cerveza:**
+  
+  + **review_aroma** (valor numérico de cinco niveles. 1-5): Calificación del aroma 
+  de la cerveza.
+
+  + **review_appearance** (valor numérico de cinco niveles. 1-5): Calificación de
+  la apariencia dela cerveza.
+
+  + **review_palate** (valor numérico de cinco niveles. 1-5): Calificación del 
+  sabor en paladar dela cerveza.
+
+  + **review_taste** (valor numérico de cinco niveles. 1-5): Calificación del sabor 
+  de la cerveza.
+  
+  + **review_overall** (valor numérico de seis niveles. 0-5): Clase indicadora del 
+  nivel de calidad de la cerveza.
+  
+  
+  
+* **4. Identificacion cerveza:**
+
+  + **beer_abv** (valor continuo de punto flotante): Índice de fuerza 
+  (marcado sabor) de la cerveza.
+
+  + **beer_style** (valor nominal alfanumérico): Nombre del estilo de la cerveza.
+
+  + **beer_name** (valor nominal alfanumérico): Nombre de la cerveza.
+
+  + **beer_beerid** (valor continuo): Identificación de la cerveza
+
+
+A continuacion se muestra un breve resumen de las variables.
+
+\newpage
+```{r}
+pander(summary(df))
+```
+\newpage
+
+## Resumen descripcion metricas principales
+
+```{r}
+calcular_valores_cerveza(df)
+```
+
+El dataset contiene 49.000 cervezas distintas, que se agrupan en 104 tipos,
+fabricadas  por 5155 empresas con  32908 usuarios valorandolas.
+
+Los factores sobre los que se realiza la evaluacion son:aroma,appearance
+(apariencia),palate( sabor al paladar), taste (sabor) y una nota media final. 
+
+Se distribuyen en una escala de 0 a 5.
+
+## Componentes de una review
+
+```{r}
+plot_boxplot_attributes(df, "Review Attributes", "Score")
+```
+
+En el boxplot puede observarse como las cervezas que se testean son productos de
+calidad alta ya que su primer cuartil se ubica alrededor del 3.5, mas de la 
+mitad del rango de valoracion, ademas la media de valoracion es de un 3.7- 3.8
+y una mediana de 4 para todos los factores, lo que a su vez hace que esos 
+resultados sean los que obtenemosen la calificacion global o overall.
+
+Podemos observar la gran similitud de las valoraciones para los cinco atributos,
+unicamente apariencia(appearence), presenta una ligerisima variabilidad superior.
+
+Como podemos observar los usuarios valoran, muy positivamente, los productos
+evaluados. La media se ubica en 3.84 que es mas de la mitad del rango posible
+de puntuacion.
+Asimismo observar que el rango intercuartilico entre el 3.5 y el 4.5, muy cerca 
+de la puntuacion maxima. La mediana se ubica en un 4.
+
+Podemos acudir al foro beer_advocate, de donde esta tomado el dataset, y 
+discretizar la valoracion global en base a su metodo, el cual podemos encontrar 
+en el siguiente link:
+
+> 
+>   https://www.beeradvocate.com/community/threads/how-to-review-a-beer.241156/
+>
+
+Asi tenemos:
+
+  - 4.50 - 5.00 = World-Class
+  
+  - 4.00 - 4.49 = Outstanding
+  
+  - 3.75 - 3.99 = Very Good
+  
+  - 3.50 - 3.74 = Good
+  
+  - 3.00 - 3.49 = Okay
+  
+  - 2.00 - 2.99 = Poor
+  
+  - 0 - 1.99 = Awful
+
+Con estos valores construiremos nuestra variable final_score:
+
+```{r}
+df$final_score <- cut(df$review_overall,
+                      breaks = c(-1,1.99,2.49,2.99,3.49,3.99,4.49,5.00),
+                      labels = c( "Awful","Poor","Okay","Good"
+                                    ,"Very Good","Outstanding","World-Class"))
+pander(summary(df$final_score))
+```
+
+
+```{r}
+custom_barplot(df, final_score, 7, "Total Review", "Final Score", 
+               "Final Score level Quantity")
+```
+Como mencionabamos anteriormente podemos observar que las valoraciones son altas
+,entre las clases World-Class y Outstanding tenemos 952.486 observaciones, 
+el 62,27 % del total.
+
+La evaluacion final depende de 5 factores, ante esto cabe preguntarse que 
+factores, aromas, sabor, apariencia y sabor al paladar, son los mas 
+determinantes en la ponderacion final de la calidad de la cerveza, para lo cual 
+se procede a representar la matriz de correlacion.
+
+Los 3 atributos mas importantes en la formacion de la nota final son 
+taste(sabor) 0.79, palate(sabor al palador) 0.73 y el aroma con 0.72.
+
+```{r}
+five_atributes <- df %>%
+select(review_overall,review_aroma,review_appearance,review_palate,review_taste)
+corrplot(cor(five_atributes),method = "number", type = "upper")
+```
+
+
+## Variable beer_style: clasifcación 14 tipologias.
+
+El dataset ademas de la evaluacion final y de los cinco factores,  
+suministra algunos atributos mas para su analisis . En particular, encontramos 
+de gran utilidad el atributo  beer_style.
+
+    
+El beer_style hace referencia a los tipos de cerveza. En el dataset original 
+podemos distinguir hasta 104 tipos diferentes. Procederemos a discretizar dicho 
+atributo para reducirlo y analizarlo  con mas facilidad.
+
+De nuevo, buscamos en el foro Beer Advocate  en la direccion:
+
+ >       https://www.beeradvocate.com/beer/styles/
+
+Alli encontraremos  una clasificacion con la que podemos pasar de 104 tipos de 
+cerveza a 14. A continuacion se procede a describir las clases de cerveza asi 
+como las subtipos, nuestros 104 tipos de partida, que los componen.
+
+A continuacion se procede a describir los 14 subtipos procedentes de 3 familias de cervezas. Se efectuara una merda descripcion rapida y enumeracion de los elementos de cada subtipo. El analisis de los mismos se llevara a cabo en la descripcion del catalogo.
+
+En el mundo de la cerveza existen 3 grandes familias:
+
+   * Ale:Fermentadas con levaduras de alta fermentación a temperaturas más cálidas, lo que produce sabores más         complejos y          afrutados. Suelen tener un cuerpo más robusto y una mayor variedad de estilos.
+   
+   * Lager: Fermentan con levaduras de baja fermentación a temperaturas más frías, resultando en un sabor más limpio y refrescante. 
+   
+   * Specialty/Hybrid: Combinan características de ales y lagers, utilizando técnicas de fermentación únicas o ingredientes especiales. 
+   
+  
+  * **Tipologia cervezas Ale:**
+  
+    * **Brown Ale:**
+    
+      + Altbier
+  
+      + American 
+  
+      + Belgian Dark
+  
+      + English
+  
+      + English Dark
+    
+    * **Dark Ale:**
+    
+      + Dubbel
+
+      + Rye Beer - Roggenbier
+
+      + Scottish Ale 
+
+      + Winter Warmer
+    
+    * **Indian Pale Ale (IPA):**
+    
+      + American
+  
+      + Belgian
+  
+      + Black / Cascadian Dark Ale
+  
+      + Brut
+  
+      + English
+  
+      + Imperial
+  
+      + New England 
+  
+    * **Pale Ale:**
+   
+      + Bitter - English
+
+      + Bitter - English Extra Special / Strong Bitter (ESB)
+
+      + Blonde Ale - Belgian 
+
+      + Blonde Ale - American
+
+      + Farmhouse Ale - Bière de Garde 
+
+      + Farmhouse Ale - Saison 
+
+      + Kölsch
+
+      + Mild Ale - English Pale
+  
+      + Pale Ale - American
+
+      + Pale Ale - Belgian
+
+      + Pale Ale - English
+
+      + Red Ale - American Amber / Red 
+
+      + Red Ale - Irish
+
+    * **Porter:**
+   
+      + American
+  
+      + Baltic
+  
+      + English
+
+      + Imperial 
+
+      + Robust 
+
+      + Smoked 
+     
+    * **Stouts:**   
+
+      + American 
+
+      + American Imperial 
+
+      + English
+
+      + Foreign / Export
+
+      + Irish Dry 
+
+      + Oatmeal 
+
+      + Russian Imperial
+
+      + Sweet / Milk 
+
+    * **Strong Ale:** 
+ 
+      + Barleywine - American
+
+      + Barleywine - English
+
+      + Old Ale
+
+      + Quadrupel (Quad)
+
+      + Red Ale - Imperial 
+
+      + Scotch Ale / Wee Heavy
+
+      + Strong Ale - American
+
+      + Strong Ale - Belgian Dark
+
+      + Strong Ale - Belgian Pale
+
+      + Strong Ale - English
+
+      + Tripel
+
+      + Wheat Beer - Wheatwine 
+      
+    * **Wheat Beer:** 
+      
+      + American Dark
+
+      + American Pale
+
+      + Dunkelweizen
+
+      + Hefeweizen
+
+      + Kristallweizen
+
+      + Witbier
+      
+    * **Wild Sour:** 
+     
+      + Brettanomyces.
+      
+      + Brett Beer
+      
+      + Lambic - Faro
+      
+      + Lambic - Fruit
+      
+      + Lambic - Gueuze
+      
+      + Lambic - Traditional
+      
+      + Sour - Berliner Weisse
+      
+      + Sour - Flanders Oud Bruin
+      
+      + Sour - Flanders Red Ale
+      
+      + Sour - Fruited Kettle Sour
+      
+      + Sour - Gose
+      
+      + Wild Ale
+      
+\newpage
+      
+   * **Tipologia cervezas Lager:**     
+
+     * **Bocks:** 
+     
+       + Eisbock
+      
+       + Maibock
+      
+       + Traditional
+      
+       + Weizenbock
+      
+     * **Dark Lager:**     
+      
+       + American Amber / Red
+      
+       + European Dark
+      
+       + Märzen
+      
+       + Munich Dunkel
+      
+       + Rauchbier
+      
+       + Schwarzbier
+      
+       + Vienna
+      
+     * **Pale Lager:**      
+
+       + Lager - Adjunct
+      
+       + Lager - American
+      
+       + Lager - European / Dortmunder Export
+      
+       + Lager - European Pale
+      
+       + Lager - European Strong
+      
+       + Lager - Festbier / Wiesnbier
+      
+       + Lager - Helles
+      
+       + Lager - India Pale Lager (IPL)
+      
+       + Lager - Kellerbier / Zwickelbier
+      
+       + Lager - Light
+      
+       + Lager - Malt Liquor
+      
+       + Pilsner - Bohemian / Czech
+      
+       + Pilsner - German
+      
+       + Pilsner - Imperial
+      
+   * **Tipologia cervezas Others:**
+
+     * **Specialty Beer:**   
+       
+       + Chile Beer
+       
+       + Farmhouse Ale - Sahti
+       
+       + Fruit and Field Beer
+       
+       + Gruit / Ancient Herbed Ale
+       
+       + Happoshu
+       
+       + Herb and Spice Beer
+       
+       + Kvass
+       
+       + Lager - Japanese Rice
+       
+       + Low Alcohol Beer
+       
+       + Pumpkin Beer
+       
+       + Rye Beer
+       
+       + Smoked Beer
+       
+     * **Hybrid Beer:**
+       
+       + Bière de Champagne / Bière Brut
+       
+       + Braggot
+       
+       + California Common / Steam Beer
+       
+       + Cream Ale
+   
+## Explicacion tratamiento de beer_style: metodologia de discretizacion.
+
+Para realizar esta clasificación se han extraido los nombres, unicos,  de todas
+las cervezas que contiene el dataset.
+
+Se han exportado a python en un archivo csv. Mediante un spyder se ha efectuado
+web scraping  sobre la pagina y se han extraido todos los tipos de cerveza. 
+Con ambas listas se itera un bucle para buscar las correspondencias entre lista 
+y diccionario (tipo de cerveza: modelo de cerveza )
+
+
+Efectuado esto, se cargan las listas manualmente para crear el nuevo atributo.
+
+
+```{r}
+df['beer_types'] <-df['beer_style']
+```
+
+
+```{r}
+levels(df$beer_types) <-list(
+  
+        # LAGER ---------------------------------------------------------------
+        
+        Bock = c('Bock','Doppelbock','Eisbock','Maibock / Helles Bock',
+                 'Weizenbock'),
+        
+        Dark.L = c('American Amber / Red Lager','Euro Dark Lager',
+                       'MÃ¤rzen / Oktoberfest','Munich Dunkel Lager',
+                       'Rauchbier','Schwarzbier','Vienna Lager'),
+        
+        Pale.L = c('American Adjunct Lager',
+                       'American Double / Imperial Pilsner',
+                       'American Malt Liquor','American Pale Lager',
+                       'Czech Pilsener','Dortmunder / Export Lager',
+                       'Euro Pale Lager','Euro Strong Lager',
+                       'Keller Bier / Zwickel Bier','Light Lager',
+                       'Munich Helles Lager','German Pilsener'),
+        
+        # ALE -----------------------------------------------------------------
+        
+        Brown.A = c('Altbier','American Black Ale','American Brown Ale',
+                      'English Brown Ale','English Dark Mild Ale'),
+        
+        Dark.A = c('Dubbel','Roggenbier','Scottish Ale','Winter Warmer'),
+        
+        IPA = c('American Double / Imperial IPA','American IPA',
+                            'Belgian IPA','English India Pale Ale (IPA)'),
+        
+        Pale.A = c('American Amber / Red Ale','American Blonde Ale',
+                     'American Pale Ale (APA)','Belgian Pale Ale',
+                     'BiÃ¨re de Garde','English Bitter','English Pale Ale',
+                     'English Pale Mild Ale',
+                     'Extra Special / Strong Bitter (ESB)',
+                     'Irish Red Ale','KÃ¶lsch','Saison / Farmhouse Ale'),
+        
+        Porters = c('American Porter','Baltic Porter','Black & Tan',
+                    'English Porter'),
+        
+        Stouts = c('American Double / Imperial Stout','American Stout',
+                   'English Stout','Foreign / Export Stout',
+                   'Irish Dry Stout','Milk / Sweet Stout','Oatmeal Stout',
+                   'Russian Imperial Stout'),
+        
+        Strong.A = c('American Barleywine','American Strong Ale',
+                       'Belgian Dark Ale','Belgian Strong Dark Ale',
+                       'Belgian Strong Pale Ale','English Barleywine',
+                       'English Strong Ale','Old Ale','Quadrupel (Quad)',
+                       'Scotch Ale / Wee Heavy','Tripel','Wheatwine'),
+        
+        Wheat =  c('American Dark Wheat Ale','American Pale Wheat Ale',
+                   'Berliner Weissbier','Dunkelweizen','Hefeweizen',
+                   'Kristalweizen','Witbier'),
+        
+        Wild.Sour = c('American Wild Ale','Faro','Flanders Oud Bruin',
+                           'Flanders Red Ale','Gose','Gueuze',
+                           'Lambic - Fruit','Lambic - Unblended'),
+        
+        # OTHERS --------------------------------------------------------------
+        
+        Specialty = c('Chile Beer','Fruit / Vegetable Beer','Happoshu',
+                      'Herbed / Spiced Beer','Japanese Rice Lager','Kvass',
+                      'Low Alcohol Beer','Pumpkin Ale','Rye Beer','Sahti',
+                      'Scottish Gruit / Ancient Herbed Ale','Smoked Beer'),
+        
+        Hybrid = c('BiÃ¨re de Champagne / BiÃ¨re Brut','Braggot',
+                         'California Common / Steam Beer','Cream Ale')
+        )
+```
+
+Finalmente los 14 tipos de cerveza pueden reducirse a 3 grandes familias:
+  
+  * Lager
+  
+  * Ale
+  
+  * Others
+En la descripcion del catalogo se explicara debidamente.
+
+```{r}
+df['beer_families'] <-df['beer_types']
+
+levels(df$beer_families) <-list(
+  
+  Lager = c('Bock', 'Dark.L','Pale.L'),
+  
+  Ale = c('Brown.A', 'Dark.A', 'IPA', 'Pale.A', 'Porters',
+          'Stouts', 'Strong.A', 'Wheat','Wild.Sour' ),
+  
+  Others = c ('Specialty', 'Hybrid')
+)
+
+```
+\newpage
+# **Descripcion del catalogo**
+
+## Situacion  General
+
+En el mundo de la cerveza, existen tres grandes categorías que agrupan la mayoría de los estilos que disfrutamos hoy en día: Ale, Lager e Híbridas. Estas categorías se definen principalmente por el tipo de levadura utilizada y el proceso de fermentación, lo que influye en las características distintivas de cada tipo de cerveza, como su sabor, aroma y cuerpo. A continuación, te explicamos las diferencias fundamentales entre estos tres grupos, que conforman el árbol genealógico de la cerveza.
+
+ * **Cerveza Ale**: Las Ale son cervezas de fermentación alta, donde la levadura utilizada (Saccharomyces cerevisiae) fermenta a temperaturas templadas (15-24 °C). Este tipo de fermentación genera más ésteres, que aportan a las Ale sabores y aromas afrutados y complejos. Son cervezas históricamente más antiguas, con un sabor más fuerte, amargo y afrutado, y tienden a tener un perfil aromático más pronunciado. Las Ale deben consumirse a temperaturas más templadas (7-12 °C). Se pueden distinguir las siguientes clases: 
+ 
+    + Brown Ale: Cervezas oscuras y maltosas con sabores de caramelo y chocolate, variando de dulces y suaves a más secas y lupuladas.
+
+    + Dark Ale: Cervezas de color oscuro con perfiles de sabor a malta, a menudo con notas a frutas, especias o caramelo.
+
+    + India Pale Ale (IPA): Cervezas pálidas y lupuladas con alta amargura y aromas intensos que pueden ser cítricos, florales o frutales.
+
+    + Pale Ale: Cervezas claras con un equilibrio entre malta y lúpulo, ofreciendo sabores que van desde lo afrutado y floral hasta lo más seco y amargo.
+
+    + Porter: Cervezas oscuras con sabores a malta tostada, chocolate y café, con un perfil que puede variar de suave a robusto.
+
+    + Stout: Cervezas muy oscuras y robustas, con una gama de sabores que incluye malta tostada, café, chocolate y avena, con variaciones en dulzura y alcohol.
+
+    + Strong Ale: Cervezas con alto contenido alcohólico y sabores intensos y maltosos, a menudo con notas de frutas oscuras, caramelo y especias.
+    
+    + Wheat Beer: Cervezas ligeras y turbias elaboradas con trigo, con sabores afrutados y especiados, y una textura suave.
+    
+    + Wild Sour: Cervezas ácidas y complejas, fermentadas con levaduras salvajes, que ofrecen sabores funky y afrutados con un perfil agrio.
+ 
+
+  * **Cerveza Lager**: Las Lager se caracterizan por ser de fermentación baja. La levadura utilizada (Saccharomyces pastorianus) trabaja a temperaturas más frías (7-13 °C), lo que ralentiza el proceso de fermentación, resultando en cervezas más suaves y limpias en cuanto a cuerpo y sabor. Las Lager suelen ser más gasificadas, ligeras y equilibradas en sabor, con un perfil aromático más sutil que las Ale. Se distinguen los siguientes tipos:
+  
+    + Bock: Lager fuerte, originaria de Alemania, caracterizada por su cuerpo robusto y maltosidad rica. Su color varía del cobre al marrón y su contenido alcohólico suele ser elevado (6% o más).
+
+    + Dark Lager: Lager oscura que va del ámbar al negro, con sabores maltosos y notas de caramelo, chocolate o pan tostado. Suave y fácil de beber, con un contenido alcohólico moderado.
+
+    + Pale Lager: Lager clara y ligera, de cuerpo suave y bajo amargor. Es refrescante y fácil de beber, ideal para el consumo masivo, con un sabor limpio y sutil.
+
+  * **Cervezas Others /Híbridas**: Las cervezas híbridas combinan características tanto de las Ale como de las Lager, utilizando métodos de fermentación que pueden ser intermedios o mixtos. Pueden emplear técnicas de fermentación alta con temperaturas de Lager, o viceversa, produciendo sabores complejos y únicos que no se alinean claramente con una sola categoría. Se distinguen dos tipos:
+
+    + Specialty Beers: Cervezas tradicionales como Stout o Pale Ale que incorporan ingredientes especiales, como frutas, especias o hierbas, alterando significativamente el perfil de sabor original.
+
+    + Hybrid Beers: Cervezas que emplean métodos de Lager con levadura Ale (o viceversa), generando estilos distintivos como Cream Ale o California Common, que no encajan en las categorías tradicionales.
+  
+
+```{r}
+custom_barplot(df, beer_families, 3, "Total Review", " Beer Family",
+               "Total Review per Family")
+```
+Existe una clara predileccion a revisar cervezas del tipo Ale ya que suponen un 
+70% del total.
+
+
+```{r}
+table0 <- table(df$beer_families,df$final_score)
+kable(table0)
+```
+```{r}
+list_levels = c("World-Class","Outstanding","Very Good"
+,"Good", "Okay","Poor","Awful")
+stacked_barplot_custom_evo (table0, "beer_type", "final_score",
+"Percentage of Beers in Each Rating Range per Family",
+list_levels)
+```
+
+```{r}
+table1 <- table(df$beer_types,df$final_score)
+
+stacked_barplot_custom_evo (table1, "beer_type", "final_score",
+"Final Score per all subcategories",
+list_levels)
+```
+
+```{r}
+kable(table1)
+```
+
+\newpage
+
+## Cervezas Ale
+
+```{r}
+ALE_BEER <- df[df$beer_families == 'Ale',]
+pander (calcular_valores_cerveza(ALE_BEER))
+```
+
+La cerveza ale es un estilo de cerveza que se caracteriza por utilizar levaduras de fermentación alta (Saccharomyces cerevisiae), las cuales actúan a temperaturas relativamente cálidas, entre 15°C y 24°C. Este proceso de fermentación produce sabores y aromas más complejos y afrutados en comparación con las cervezas de fermentación baja (lager). Las ales tienden a tener un cuerpo más robusto y una mayor variedad de sabores, que van desde lo dulce y maltoso hasta lo amargo y lupulado.
+
+```{r}
+donut_total(ALE_BEER, "Total Num of Beers Ale Type")
+```
+
+\newpage
+
+**Dark Ales**
+
+El término Dark Ale es más descriptivo que un estilo definido. Se refiere a cervezas de color oscuro, con cuerpo y sabores que varían desde maltosos hasta afrutados o especiados. La denominación fue común en los Estados Unidos en los años 80, aunque actualmente ha sido reemplazada por clasificaciones más precisas. Un ejemplo notable es la Belgian Dark Strong Ale, una cerveza de estilo abadía con un alto contenido alcohólico y sabores complejos que incluyen frutas oscuras, especias y caramelo.
+Subtipos de Dark Ale:
+
+* Dubbel: Una cerveza de abadía belga con sabores a frutas oscuras, caramelo y especias, de cuerpo medio a alto.
+
+* Rye Beer (Roggenbier): Elaborada con centeno, aporta un sabor especiado y terroso, junto con el dulzor de la malta.
+
+* Scottish Ale: Tostada y maltosa, con sabores a caramelo y un carácter ahumado suave.
+
+* Winter Warmer: Cerveza estacional fuerte y maltosa, a menudo con especias que la hacen ideal para el invierno.
+
+
+
+```{r}
+DARK_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Dark.A',]
+DARK_ALE <- DARK_ALE %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (DARK_ALE, title = "Distribution Dark Ale")
+```
+\newpage
+**India Pale Ales (IPA)**
+Las India Pale Ales (IPA) son cervezas con un alto contenido de lúpulo, lo que les otorga una fuerte amargura y un aroma característico que puede incluir notas cítricas, florales, herbales o de resina. Originalmente, este estilo fue diseñado para resistir los largos viajes marítimos desde Inglaterra a India, gracias al lúpulo, que actúa como conservante. Las IPA modernas varían ampliamente en sabor y amargor, y las versiones americanas tienden a ser más lupuladas y aromáticas que las inglesas.
+
+Subtipos de IPA:
+
+* American IPA: Muy lupulada, con perfiles cítricos, frutales o resinosos, y un amargor pronunciado.
+Belgian IPA: Combina las características del lúpulo de una IPA con el perfil afrutado y especiado de las levaduras belgas.
+    
+* Black IPA (Cascadian Dark Ale): Una IPA oscura con notas tostadas o de chocolate, pero con un fuerte carácter de lúpulo.
+    
+* Brut IPA: Muy seca, con un final limpio, a menudo menos amarga que otras IPA.
+
+* English IPA: Más equilibrada y maltosa que la versión americana, con menos amargor.
+
+* Imperial IPA: Versión más fuerte, con un alto contenido de alcohol y un perfil muy lupulado.
+
+* New England IPA: De cuerpo turbio y jugoso, con un perfil frutal y menos amargor que las IPA tradicionales.
+```{r}
+IPA <- ALE_BEER[ALE_BEER$beer_types == 'IPA',]
+IPA <- IPA %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (IPA, title = "Distribution of Indian PAle Ale")
+```
+\newpage
+**Pale Ales**
+
+Las Pale Ales son cervezas claras elaboradas con maltas pálidas que aportan un color dorado o ámbar. Estas cervezas tienen un equilibrio entre el dulzor de la malta y el amargor del lúpulo. Nacidas en Inglaterra en el siglo XVIII, han evolucionado en estilos regionales, con las versiones americanas siendo más lupuladas que las tradicionales inglesas.
+
+Subtipos de Pale Ale:
+
+* Bitter (English): Versión inglesa, con moderado amargor y cuerpo ligero, predominan las notas a malta.
+
+* Blonde Ale (Belgian): Cerveza belga ligera y afrutada, con un suave amargor y cuerpo ligero.
+
+* Farmhouse Ale (Bière de Garde): Estilo rústico del norte de Francia, maltosa y especiada, de cuerpo   
+medio.
+
+* Kölsch: Originaria de Alemania, es una ale suave, ligera y refrescante, con un final limpio.
+
+* Red Ale (American Amber/Red): Ligeramente caramelizada, con cuerpo medio y un equilibrio entre malta y lúpulo.
+
+```{r}
+PALE_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Pale.A',]
+PALE_ALE <- PALE_ALE %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (PALE_ALE, title = "Distribution of PAle Ale")
+```
+\newpage
+**Porter**
+
+Las Porter son cervezas oscuras que surgieron en Londres en el siglo XVIII. Tienen sabores a malta tostada que pueden incluir chocolate, café y caramelo. Originalmente muy populares entre los trabajadores portuarios, se convirtió en uno de los estilos de cerveza más exportados. Las porter y las stout comparten una historia común, y a menudo los nombres son intercambiables en algunas cervecerías.
+Subtipos de Porter:
+
+* American Porter: Más lupulada que la versión inglesa, con un perfil tostado y amargor moderado.
+
+* Baltic Porter: De origen báltico, tiene un cuerpo más robusto y un alto contenido alcohólico, con sabores a frutas oscuras y malta.
+
+* English Porter: Más ligera en cuerpo que las versiones modernas, con sabores a malta tostada y caramelo.
+
+* Imperial Porter: Fuerte y compleja, con alto contenido alcohólico y sabores intensos a malta.
+
+* Robust Porter: Porter con mayor énfasis en el tostado y un amargor más pronunciado.
+
+* Smoked Porter: Elaborada con maltas ahumadas, lo que le da un característico sabor ahumado.
+
+```{r}
+PORTER <- ALE_BEER[ALE_BEER$beer_types == 'Porters',]
+PORTER  <- PORTER  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (PORTER, title = "Distribution of Porter")
+```
+\newpage
+**Stouts**
+
+Las Stouts son cervezas oscuras y robustas, con una historia compartida con las porter. Se caracterizan por su fuerte sabor a malta tostada y notas de café, chocolate o avena. Existen muchas variaciones, desde las stouts secas hasta las más dulces y alcohólicas. Las Russian Imperial Stouts son un ejemplo de stout fuerte y alcohólica que fue elaborada originalmente para la corte imperial rusa.
+Subtipos de Stout:
+
+* American Stout: Más lupulada que las versiones tradicionales, con sabores a café y chocolate.
+
+* Oatmeal Stout: Suave y cremosa, gracias al uso de avena en su elaboración.
+
+* Russian Imperial Stout: Muy fuerte, con un alto contenido alcohólico y sabores intensos a frutas oscuras, malta tostada y chocolate.
+
+* Sweet/Milk Stout: Más dulce, con lactosa añadida para darle un perfil más cremoso y suave.
+
+* Irish Dry Stout: De cuerpo ligero y seco, con un amargor moderado y sabores a café tostado (como la Guinness).
+
+```{r}
+STOUT <- ALE_BEER[ALE_BEER$beer_types == 'Stouts',]
+STOUT  <- STOUT  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (STOUT, title = "Distribution of Stouts")
+```
+\newpage
+**Strong Ale**
+Las Strong Ales son cervezas con un contenido alcohólico elevado (generalmente superior al 7%), con un carácter maltoso y sabores complejos que incluyen frutas, caramelo y especias. Son cervezas ricas y a menudo destinadas a disfrutarse lentamente. Este grupo incluye varios estilos de alto perfil alcohólico y robustez, como el Barleywine y el Old Ale.
+Subtipos de Strong Ale:
+
+* Barleywine (American/English): Cervezas intensamente maltosas, con alto contenido alcohólico y sabores a frutas oscuras y caramelo.
+
+* Old Ale: Cerveza envejecida con sabores profundos y complejos, a menudo con un ligero carácter avinagrado.
+    
+* Quadrupel: Estilo belga fuerte, con sabores ricos y afrutados, de cuerpo pesado.
+
+* Scotch Ale/Wee Heavy: Cerveza escocesa maltosa y dulce, con un contenido alcohólico elevado.
+
+* Tripel: Cerveza belga dorada, de cuerpo ligero y muy alcohólica, con notas especiadas y afrutadas.
+
+```{r}
+STRONG_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Strong.A',]
+STRONG_ALE  <- STRONG_ALE  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (STRONG_ALE, title = "Distribution of Strong Ale")
+```
+
+\newpage
+**Brown Ale**
+Las brown ales son cervezas de origen inglés que se caracterizan por su color que varía desde ámbar profundo hasta marrón oscuro, y por su sabor maltoso, con notas de caramelo, chocolate y a veces nueces. Esta categoría incluye tanto cervezas inglesas tradicionales como adaptaciones modernas, principalmente en América del Norte. Las versiones del noreste de Inglaterra son conocidas por su mayor cuerpo y carácter maltoso, mientras que las del sur tienden a ser más dulces y ligeras en alcohol. Las versiones americanas son generalmente más secas y con un mayor perfil de lúpulo, ofreciendo un toque cítrico y un cuerpo medio.
+Subtipos de Brown Ale:
+
+   + Altbier: Originaria de Alemania, es una ale oscura con un equilibrio entre la malta tostada y el lúpulo. Su perfil de sabor es limpio y bien balanceado.
+
+   + American Brown Ale: Más lupulada y seca que la versión inglesa, con un toque cítrico característico del lúpulo americano.
+    
+   + Belgian Dark Ale: Cerveza belga oscura, afrutada y maltosa, con notas especiadas gracias a las levaduras belgas.
+   
+   + English Brown Ale: Suele ser más dulce y con cuerpo medio, con sabores a caramelo y nueces.
+    
+   + English Dark Ale: Variante más oscura y dulce, con menos énfasis en el lúpulo, predominan las notas a malta y caramelo.
+```{r}
+BROWN_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Brown.A',]
+BROWN_ALE  <- BROWN_ALE  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (STRONG_ALE, title = "Distribution of Brown Ale")
+```
+\newpage
+**Wheat** 
+
+La cerveza de trigo, wheat beer,  es un tipo de cerveza top-fermentada (de alta fermentación) que se elabora con una gran proporción de trigo en la mezcla de granos, en contraste con la mayoría de las cervezas, que utilizan principalmente cebada malteada. Dependiendo del estilo y la región, la proporción de trigo en estas cervezas puede variar, pero generalmente se encuentra entre el 30% y el 70% del total de los granos utilizados en la receta. El uso de trigo da como resultado una cerveza más suave y con una espuma más espesa, así como una turbidez característica.
+
+  * American Dark Wheat Beer :Una cerveza de trigo oscura al estilo estadounidense, con maltas tostadas que aportan notas de caramelo, chocolate y café ligero. Sabor afrutado con un toque de dulzor tostado. Su apariencia es oscura y turbia, con una espuma espesa. Tiene un contenido alcohólico de 4.5% a 6%.
+  
+  * American Pale Wheat Ale:Una versión clara y lupulada de la cerveza de trigo, con sabores suaves de trigo combinados con un marcado amargor del lúpulo, que aporta notas cítricas y florales. Es turbia y de color dorado, muy refrescante. Su graduación alcohólica suele oscilar entre 4.0% y 5.5%.
+  
+  * Dunkelweizen: Versión oscura de la cerveza de trigo alemana, caracterizada por sabores de malta dulce, caramelo y especias como clavo, junto a notas frutales como plátano. Es turbia, de color marrón oscuro, con una espuma espesa y cremosa. Alcohol entre 4.5% y 6%.
+  
+  * Hefeweizen:Cerveza de trigo alemana sin filtrar, famosa por sus sabores afrutados (plátano) y especiados (clavo). Tiene una textura suave, cuerpo ligero, y una apariencia dorada y turbia, con espuma blanca abundante. El alcohol varía entre 4.5% y 5.5%.
+
+  * Kristallweizen:Variante filtrada de la Hefeweizen, con una apariencia clara y cristalina. Mantiene los sabores afrutados y especiados, aunque más suaves, con una sensación en boca más limpia y ligera. Alcohol entre 4.5% y 5.5%.
+  
+  * Witbier:Cerveza de trigo belga, elaborada con cáscara de naranja y cilantro, lo que le da un toque especiado y cítrico. Su sabor es suave, refrescante y ligeramente ácido. Es turbia y de color amarillo pálido, con una espuma blanca duradera. Alcohol entre 4.5% y 5.5%.
+
+
+```{r}
+WHEAT_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Wheat',]
+WHEAT_ALE  <- WHEAT_ALE  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (WHEAT_ALE, title = "Distribution of Wheat Ale")
+```
+\newpage
+**Wild Sour**
+Son un estilo de cerveza artesanal que se caracteriza por su acidez y sabor distintivo, resultado de métodos de fermentación no tradicionales, a menudo mediante el uso de levaduras y bacterias salvajes o inusuales. Estas cervezas, que incluyen las sour ales (cervezas ácidas) y wild ales (cervezas salvajes), ofrecen una experiencia sensorial única que va desde sabores afrutados y ácidos hasta complejidades terrosas y especiadas. Aunque tienen sus raíces en Bélgica, han ganado popularidad en todo el mundo, especialmente en las cervecerías artesanales de Europa, Estados Unidos y Canadá.
+
+  * Wild Ales: Son un estilo de cerveza que se caracteriza por su fermentación utilizando levaduras salvajes, principalmente la Brettanomyces (comúnmente conocida como Brett). Esta levadura da lugar a sabores complejos, terrosos, picantes y a veces a "cuero" o "animal", que pueden ser desafiantes para algunos consumidores. Las wild ales estadounidenses están fuertemente influenciadas por la experimentación y la innovación, a menudo presentando combinaciones de frutas o especias, además de los sabores naturales de la levadura Brett.
+  
+  * Brett Beer: Es una cerveza fermentada total o parcialmente con la levadura Brettanomyces. Esta levadura puede agregar un carácter funky, a menudo descrito como "rústico" o "campestre". A diferencia de otras levaduras, Brett puede fermentar azúcares más complejos, lo que permite que estas cervezas continúen desarrollándose en la botella durante años. Los sabores incluyen notas de heno, especias, frutas secas y cuero, y pueden variar desde ácidas hasta secas y agrias.
+Lambic
+
+  * Lambic es un estilo de cerveza ácida tradicional de Bélgica, elaborado principalmente en la región del Pajottenland y Bruselas. Es el producto de la fermentación espontánea, un proceso en el que la cerveza se expone al aire para que las levaduras y bacterias naturales presentes en el ambiente comiencen el proceso de fermentación. Las variantes del lambic incluyen:
+
+  + Faro es una versión más ligera y dulce del lambic, tradicionalmente endulzada con azúcar morena o jarabe de caramelo para equilibrar la acidez natural de la cerveza. Esta versión solía ser una bebida más popular debido a su perfil más suave y accesible. Aunque menos frecuente que otras variantes de lambic, el Faro tiene un lugar importante en la historia de las cervezas belgas.
+Lambic - Fruit
+
+  + Lambic - fruit: Son cervezas a las que se les añaden frutas durante el proceso de fermentación. Las más conocidas son la Kriek (lambic con cerezas) y la Framboise (lambic con frambuesas). La acidez de la cerveza se equilibra con la dulzura de las frutas, creando un perfil de sabor agrio, afrutado y ligeramente dulce. A menudo, se utilizan frutas locales, lo que da lugar a una gran variedad de sabores y estilos según la región.
+Lambic - Gueuze
+
+  + Gueuze :Es una mezcla de lambics jóvenes y viejos que se embotellan juntos para una segunda fermentación. Esta mezcla crea una cerveza más efervescente, similar a un champán, con un perfil de sabor que incluye notas agrias, afrutadas y ligeramente amargas. Las Gueuze pueden madurar durante años, lo que les da una complejidad y profundidad de sabor excepcionales.
+Lambic - Traditional
+
+  + Lambic tradicional:Es una cerveza sin aditivos, sin fruta y sin endulzantes, hecha mediante el método original de fermentación espontánea. Es una cerveza plana, sin gas, con un carácter ácido y terroso. Los lambics tradicionales suelen ser apreciados por los verdaderos aficionados a la cerveza artesanal debido a su pureza y respeto por los métodos de elaboración histórica.
+Sour Beers
+
+  * Sour beers (cervezas ácidas) son un estilo amplio que incluye una gran variedad de cervezas que utilizan bacterias como el Lactobacillus y el Pediococcus, así como levaduras salvajes como Brettanomyces para desarrollar su acidez característica. A continuación, se exploran algunas de sus variantes más populares:
+
+  + Berliner Weisse: Es una cerveza ácida de trigo originaria de Berlín, Alemania. Es ligera en alcohol (generalmente entre 2.5% y 4% ABV), con una acidez suave y refrescante, y tradicionalmente se sirve con jarabes de frutas como el de frambuesa o el de aspérula para equilibrar la acidez. A menudo se describe como la "champaña del norte de Alemania" debido a su carbonatación ligera y su perfil refrescante.
+Sour - Flanders Oud Bruin
+
+  + Flanders Oud Bruin: Es una cerveza marrón ácida, originaria de la región de Flandes, en Bélgica. Esta cerveza se envejece en barriles de roble durante meses o incluso años, lo que da como resultado un sabor agrio moderado, con matices de frutas oscuras como ciruelas y pasas, así como un toque acaramelado. Las Oud Bruin tienden a ser más suaves y menos ácidas que otras cervezas ácidas flamencas, con un equilibrio entre dulce y agrio.
+
+
+  + Flanders Red Ale: Es otra cerveza ácida belga, aunque a menudo más intensa en acidez que el Oud Bruin. Este estilo se envejece en barriles de roble, lo que le da un color rojo profundo y sabores de frutas agrias como cerezas y grosellas. Su perfil de sabor es agridulce, con un final seco. Es una de las cervezas ácidas belgas más populares y emblemáticas.
+Sour - Fruited Kettle Sour
+
+  + Fruited Kettle Sours: Es una categoría moderna de cervezas ácidas elaboradas mediante el proceso de kettle souring, que es una forma controlada y más rápida de hacer cervezas ácidas en comparación con los métodos tradicionales. Después de la acidificación, se agregan frutas para realzar el sabor y ofrecer una experiencia refrescante y afrutada. Estas cervezas son populares en la escena de la cerveza artesanal moderna debido a su rapidez de producción y a su versatilidad en cuanto a ingredientes.
+Sour - Gose
+
+  + Gose: es una cerveza ácida alemana, originaria de la ciudad de Goslar. Se elabora con un toque de sal y coriandro, lo que le da un perfil único de sabor ligeramente salado y especiado. Las Gose también tienden a tener una acidez moderada, con una carbonatación brillante y un bajo contenido de alcohol. Este estilo se ha popularizado en los últimos años debido a su carácter refrescante y fácil de beber.
+
+  + Wild ales: Es una categoría más amplia de cervezas que, al igual que las sour ales, se elaboran utilizando levaduras y bacterias salvajes, aunque no necesariamente buscan ser intensamente ácidas. Estas cervezas suelen tener un carácter impredecible y pueden variar en sabor de lote a lote, dependiendo de las levaduras salvajes utilizadas y las condiciones de fermentación. Algunas wild ales pueden ser secas y ligeramente especiadas, mientras que otras pueden tener notas afrutadas o terrosas. Su versatilidad y naturaleza experimental las han convertido en una de las categorías más emocionantes dentro del mundo de la cerveza artesanal.
+
+
+```{r}
+WILD_ALE <- ALE_BEER[ALE_BEER$beer_types == 'Wild.Sour',]
+WILD_ALE  <- WHEAT_ALE  %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (WILD_ALE, title = "Distribution of Wild Sour")
+```
+
+Listado de todas las variedades ALES, con el tipo de cerveza, el total de las mismdas
+y el porcentaje que suponen dentro del catalogo total.
+```{r}
+df_ale_count_beers <- count_beers(df, 'Ale')
+pander(df_ale_count_beers)
+```
+
+\newpage
+## Cervezas Lager
+
+```{r}
+LAGER_BEER <- df[df$beer_families == 'Lager',]
+pander (calcular_valores_cerveza(LAGER_BEER))
+```
+
+Las cervezas lager son cervezas de baja fermentación, caracterizadas por el uso de levaduras que trabajan a temperaturas más frías (alrededor de 7°C a 13°C). Este método de fermentación produce una cerveza limpia y suave en sabor, con menos compuestos afrutados o especiados que las ales. Las lagers suelen ser envejecidas durante largos períodos a bajas temperaturas, lo que ayuda a suavizar los sabores y a obtener una bebida clara y fresca. Dentro de las lagers, encontramos una gran diversidad de estilos, desde cervezas ligeras y refrescantes hasta más oscuras y maltosas.
+
+```{r}
+donut_total(LAGER_BEER, "Total Num of Beers Ale Type")
+```
+\newpage
+* **Bock**
+Es un estilo de cerveza lager fuerte, originario de la ciudad alemana de Einbeck. Tradicionalmente era una cerveza oscura, con un contenido alcohólico elevado (alrededor de 6% ABV). Las bocks modernas pueden variar en color, desde un cobre claro hasta un marrón profundo. Suelen ser cervezas ricas en malta, con un dulzor que recuerda al caramelo o al toffee, y un amargor moderado, por lo que son cervezas muy equilibradas. Estas cervezas se producen principalmente en otoño y primavera.
+
+Subtipos de Bock:
+
+   + Doppelbock: Versión más fuerte y malteada, con mayor contenido alcohólico (7-10% ABV). Conocida por sus sabores ricos y dulces, a menudo con toques de frutas oscuras como ciruelas o pasas. Este estilo fue creado originalmente por monjes bávaros como una "cerveza líquida" durante los períodos de ayuno.
+    
+   + Eisbock: Es una bock extremadamente fuerte, elaborada al congelar parcialmente la cerveza y remover el agua en forma de hielo. Esto concentra el alcohol y el sabor, creando una cerveza potente (generalmente entre 9-14% ABV) con notas intensas de malta caramelizada y frutas secas.
+    
+   + Maibock (Helles Bock): Más ligera y lupulada que otras variantes de bock, con un color más claro, a menudo dorado o ámbar pálido. Su sabor tiene un equilibrio entre malta y lúpulo, haciéndola menos dulce que las doppelbock, con un final más seco. Es tradicional en primavera.
+    
+   + Traditional Bock: Esta es la versión más clásica, oscura, malteada y con cuerpo, típica del estilo original de Einbeck, Alemania. Tiene sabores de caramelo, toffee y un leve amargor.
+
+   + Weizenbock: Una variante única que combina los ingredientes típicos de una bock con una proporción significativa de trigo. Tiene las características afrutadas y especiadas de las cervezas de trigo alemanas (banana, clavo) combinadas con la robustez y dulzura de la malta de las bock.
+   
+```{r}
+BOCK <- LAGER_BEER[LAGER_BEER$beer_types == 'Bock',]
+BOCK <- BOCK %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (BOCK, title = "Distribution of Bock")
+```
+  
+\newpage
+
+* **Dark Lager**
+
+Las dark lagers (lagers oscuras) son cervezas que varían en color desde el ámbar oscuro hasta el negro. Su sabor tiende a ser más maltoso y con notas de chocolate, café, caramelo o regaliz, pero siempre con la suavidad y limpieza que caracteriza a las cervezas de fermentación baja. A pesar de su apariencia oscura, no suelen ser tan intensas en cuanto a amargor como otras cervezas oscuras tipo stout o porter. El contenido alcohólico generalmente oscila entre el 4.5% y el 5.5% ABV.
+
+Subtipos de Dark Lager:
+
+   + American Amber / Red Lager: Lager ámbar estadounidense con un perfil balanceado de malta y lúpulo, con sabores a caramelo y un final ligeramente tostado.
+    
+   + European Dark Lager: Lager oscura de estilo europeo, generalmente más maltosa y menos lupulada que sus contrapartes estadounidenses, con notas de caramelo y un cuerpo medio.
+    
+   + Märzen: Lager alemana de cuerpo medio, tradicionalmente elaborada para el festival de Oktoberfest. Tiene un color ámbar oscuro y un perfil maltoso, con dulzor a caramelo y toffee, pero con un final suave y equilibrado.
+    
+   + Munich Dunkel: Lager oscura de Munich con un perfil de sabor maltoso, que recuerda a pan tostado, caramelo, y a veces chocolate. Tiene baja amargura, y su dulzura es moderada.
+    
+   + Rauchbier: Una lager oscura y ahumada, elaborada con maltas secadas sobre madera ardiente, lo que le otorga un carácter notablemente ahumado, similar a las carnes curadas.
+    
+   + Schwarzbier: Lager negra alemana con sabores tostados y a malta chocolateada, pero con un cuerpo sorprendentemente ligero y un final limpio. A pesar de su color, es una cerveza fácil de beber y menos intensa que otros estilos oscuros.
+
+   + Vienna Lager: Lager ámbar de cuerpo medio con sabores a malta tostada y caramelo, popularizada por cervecerías de Austria y México. Tiene un dulzor equilibrado y un final seco.
+
+```{r}
+DARK_LAGER <- LAGER_BEER[LAGER_BEER$beer_types == 'Dark.L',]
+DARK_LAGER <- DARK_LAGER %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (BOCK, title = "Distribution of Dark Lager")
+```
+
+
+
+* **Pale Lager**
+
+Las pale lagers son cervezas de fermentación baja, generalmente claras o doradas, con un perfil de sabor suave y equilibrado. Estas cervezas tienen un nivel de lúpulo bajo a moderado, lo que les otorga un carácter más refrescante y fácil de beber en comparación con las ales. Las pale lagers abarcan una amplia gama de estilos y suelen utilizar adjuntos como maíz o arroz para aligerar el cuerpo de la cerveza, haciendo que sean más suaves y accesibles para el consumo masivo.
+
+```{r}
+PALE_LAGER <- LAGER_BEER[LAGER_BEER$beer_types == 'Pale.L',]
+PALE_LAGER <- PALE_LAGER %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (PALE_LAGER, title = "Distribution of Pale Lager")
+```
+
+Subtipos de Pale Lager:
+
+   + Lager - Adjunct: Lager ligera que utiliza ingredientes como arroz o maíz como adjuntos para suavizar el sabor de la malta y hacer la cerveza más ligera en cuerpo y sabor.
+    
+   + Lager - American: Lager pálida producida en Estados Unidos, con un perfil suave y refrescante, generalmente baja en lúpulo y alcohol.
+    
+   + Lager - European / Dortmunder Export: Lager de cuerpo medio producida en Dortmund, Alemania, conocida por su equilibrio entre maltosidad y un ligero amargor de lúpulo, con un perfil más robusto que otras pale lagers.
+    
+   + Lager - European Pale: Lager clara y ligera, comúnmente encontrada en Europa, con un perfil de sabor equilibrado y refrescante.
+    
+   + Lager - European Strong: Lager con mayor contenido alcohólico (generalmente 6% o más), a menudo más dulce y maltosa que las lagers regulares, pero sin perder su suavidad.
+
+   + Lager - Festbier / Wiesnbier: Cervezas elaboradas específicamente para el Oktoberfest, con un perfil maltoso y un cuerpo más robusto, aunque todavía suaves y fáciles de beber.
+
+   + Lager - Helles: Lager clara alemana, ligeramente más maltosa y menos lupulada que la pilsner. Es refrescante y de cuerpo medio, con un final suave.
+
+   + Lager - India Pale Lager (IPL): Versión lupulada de una lager, que combina las características de amargura y aromas del lúpulo de una IPA, pero con la limpieza de una fermentación lager.
+
+   + Lager - Kellerbier / Zwickelbier: Lagers sin filtrar y sin pasteurizar, generalmente turbias y con un perfil de sabor más rústico y robusto.
+
+   + Lager - Light: Lager extremadamente ligera en cuerpo, alcohol y sabor, creada para ser refrescante y fácil de beber.
+
+   + Lager - Malt Liquor: Lager fuerte con un alto contenido de alcohol (normalmente entre 6-9% ABV), con un sabor dulce y fuerte.
+
+   + Pilsner - Bohemian / Czech: La pilsner original, creada en la ciudad de Pilsen, República Checa. Es dorada y de cuerpo ligero, con un perfil de lúpulo floral y un amargor notable pero equilibrado.
+    
+   + Pilsner - German: Pilsner alemana con un perfil más seco y lupulado que la versión checa. Tiene un amargor más pronunciado y es muy refrescante.
+    
+   + Pilsner - Imperial: Versión más fuerte y lupulada de una pilsner, con mayor contenido alcohólico (normalmente 7-9% ABV), y un perfil de sabor más intenso.
+   
+Listado de cervezas Lager por estilo, total de cerveza y porcentaje del catalogo total.
+
+```{r}
+# Listado de tipos de cerveza Lager
+df_lager_count_beers <- count_beers(df, 'Lager')
+pander(df_lager_count_beers)
+```
+\newpage
+
+##  Cervezas Others
+
+```{r}
+OTHER_LIST <- df[df$beer_families == 'Others',]
+calcular_valores_cerveza(OTHER_LIST)
+```
+
+Cervezas que combinan técnicas de fermentación de Ale y Lager, resultando en estilos únicos. Suelen utilizar fermentación a temperaturas intermedias, creando perfiles de sabor complejos y difíciles de clasificar en una sola categoría.
+```{r}
+donut_total(OTHER_LIST, "Total Num of Beers Others / Hybrids")
+```
+Specialty Beers: Cervezas clásicas que incluyen sabores únicos o fermentables inusuales, como frutas, especias, hierbas o   ingredientes exóticos. Crean perfiles sorprendentes y diversas experiencias gustativas.
+
+   + Chile Beer: Cerveza infusionada con chile, ofreciendo notas picantes y un perfil aromático distintivo.
+  
+   + Farmhouse Ale - Sahti: Ale tradicional finlandesa, con sabores rústicos y un toque herbal, elaborada con enebro.
+    
+  + Fruit and Field Beer: Cerveza con adición de frutas o ingredientes agrícolas, resultando en sabores frutales naturales.
+    
+  + Gruit / Ancient Herbed Ale: Estilo antiguo, elaborado sin lúpulo, con hierbas aromáticas que proporcionan un sabor herbal intenso.
+    
+  + Happoshu: Cerveza japonesa de bajo contenido en malta, ligera en cuerpo y sabor, popular en Japón.
+    
+  + Herb and Spice Beer: Cervezas con adición de hierbas y especias, como cilantro o canela, creando perfiles de sabor inusuales.
+
+  + Kvass: Bebida fermentada de origen eslavo, hecha a partir de pan, con bajo contenido alcohólico y un sabor ligeramente dulce.
+    
+  + Lager - Japanese Rice: Lager elaborada con arroz, característica por su ligereza y final limpio.
+
+  + Low Alcohol Beer: Cervezas de bajo contenido alcohólico (generalmente menos de 3%), manteniendo sabores ligeros y refrescantes.
+
+  + Pumpkin Beer: Cerveza infusionada con calabaza y especias, ofreciendo un perfil dulce y especiado, típico en otoño.
+    
+  + Rye Beer: Cerveza elaborada con centeno, que añade un toque especiado y terroso al sabor.
+    
+  + Smoked Beer: Cerveza elaborada con maltas ahumadas, que imparte un sabor ahumado pronunciado y un toque tostado.
+
+
+```{r}
+SPECIALTY <- OTHER_LIST [OTHER_LIST $beer_types == 'Specialty',]
+SPECIALTY <- SPECIALTY %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (SPECIALTY, title = "Distribution of Specialty")
+```
+**Hybrid Beers**: Cervezas que combinan métodos de elaboración de Ale y Lager, usando levadura de una con técnicas de la otra. Suelen destacar por su flexibilidad en el proceso de elaboración y sus sabores intermedios.
+
+   + Bière de Champagne / Bière Brut: Cerveza efervescente estilo champán, con una carbonatación alta y final seco.
+    
+   + Braggot: Mezcla de cerveza y miel, que aporta un equilibrio entre dulzor y maltosidad.
+
+   + California Common / Steam Beer: Cerveza fermentada con levadura Lager a temperaturas de Ale, con un perfil de malta suave y un ligero amargor.
+
+    + Cream Ale: Ale ligera y suave, que mezcla la frescura de una Lager con la suavidad de una Ale, a menudo con un toque cremoso.
+    
+```{r}
+HYBRID_BEER <- OTHER_LIST [OTHER_LIST $beer_types == 'Hybrid',]
+HYBRID_BEER <- HYBRID_BEER %>%
+group_by(beer_types,beer_style) %>%
+summarise(count = n(), .groups = 'drop')
+donut_subcount (HYBRID_BEER, title = "Distribution of Hybrid")
+```
+
+\newpage
+```{r}
+#  Listado de tipos de cerveza Others
+df_others_count_beers <- count_beers(df, 'Others')
+pander(df_others_count_beers)
+```
+\newpage
+
+# Ranking de revisiones
+
+Una vez que se ha realizado la reducción de la amplitud del dataset, identificando y eliminando aquellas dimensiones que no aportan información significativa o que no permiten obtener una clasificación precisa, se consigue una segmentación mucho más clara del mercado de cervezas. Esta depuración de los datos iniciales es fundamental, ya que elimina el ruido y permite centrarse en las variables y patrones que realmente son relevantes para el análisis. Con esta reducción, es posible empezar a examinar el mercado de manera más precisa y descubrir las características clave de los productos, fabricantes y consumidores que componen este sector.
+
+Para analizar el mercado de cervezas de manera exhaustiva, se abordarán diferentes perspectivas o enfoques. Estas perspectivas incluyen:
+
+**Perspectiva de Producto**
+
+Desde esta óptica, el análisis se centrará en los productos individuales, es decir, las cervezas. El primer paso será identificar cuáles son las 10 cervezas más revisadas o evaluadas en el foro. Al calcular este ranking, no solo obtendremos información sobre las cervezas que generan mayor interés o que tienen una base de consumidores más comprometida, sino que también podremos empezar a vislumbrar patrones de consumo y popularidad entre las distintas marcas y estilos de cerveza.
+
+Este análisis permitirá responder preguntas clave, como:
+
+  * ¿Cuáles son los tipos de cerveza (lager, ale, stout, IPA, entre otros) más evaluados?
+
+  * ¿Qué estilos de cerveza gozan de mayor popularidad entre los usuarios del foro?
+
+  * ¿Existen tendencias emergentes en cuanto a los tipos de cervezas más valorados?
+  
+  * ¿Cuáles son los productores mejor posicionados dentro de cada uno de estos productos?
+
+Además, al observar qué cervezas reciben el mayor número de revisiones o comentarios, se puede empezar a calcular una especie de “cuota de mercado” en términos de revisiones o evaluaciones. Si bien no se trata de una cuota de mercado real (en términos de ventas o participación económica), este indicador nos proporciona una visión clara de qué tan activamente se discute y evalúa una cerveza en particular. Este dato puede servir como proxy para el nivel de interés o la penetración de una marca en la comunidad de consumidores de cerveza.
+
+**Perspectiva de Fabricante**
+
+Desde la perspectiva del fabricante, el análisis se centrará en identificar a las empresas productoras de cerveza que dominan el mercado en términos de revisiones o evaluaciones en el foro. El objetivo aquí será obtener un ranking de las 10 empresas más relevantes, es decir, aquellas que cuentan con un mayor volumen de cervezas evaluadas o con las cervezas más populares entre los consumidores.
+
+Para justificar esta posición de liderazgo, se procederá a analizar los productos específicos que cada una de estas empresas ofrece y que contribuyen a su "cuota de revisiones". Este enfoque permitirá responder preguntas como:
+
+  * ¿Qué empresas tienen una mayor presencia en el mercado de cervezas evaluadas?
+    
+  * ¿Cuáles son los productos clave que justifican su posición en el ranking?
+
+  * ¿Existen fabricantes que se especializan en ciertos tipos de cerveza y que dominan esos nichos en particular?
+
+Además, este análisis permitirá observar si existen grandes conglomerados cerveceros que monopolizan las revisiones o si, por el contrario, el mercado está más fragmentado, con muchos pequeños productores compitiendo por la atención de los consumidores. También se podrá evaluar si existen diferencias significativas en la cantidad de revisiones recibidas por las cervezas de grandes fabricantes en comparación con las producidas por cervecerías artesanales o independientes.
+
+**Perspectiva de Consumidor**
+
+El análisis desde la perspectiva del consumidor se enfocará en los usuarios o "foreros" que mayor participación tienen en el foro. Aquí, el objetivo es identificar a los consumidores más activos, aquellos que realizan el mayor número de revisiones o que interactúan de manera más frecuente en la comunidad cervecera. Estos usuarios suelen ser líderes de opinión dentro del foro, ya que su alto nivel de actividad les confiere cierta autoridad o credibilidad en cuanto a sus evaluaciones.
+
+Una vez identificados estos consumidores clave, se procederá a analizar sus patrones de consumo. Esto permitirá obtener información sobre:
+
+  * ¿Qué categorías de cerveza consumen con mayor frecuencia estos usuarios activos?
+  
+  * ¿Existen preferencias claras entre los foreros más activos por ciertos tipos de cervezas o estilos específicos?
+
+  * ¿Qué marcas o fabricantes tienden a recibir más atención de estos consumidores?
+
+Este análisis también puede revelar si los foreros más activos son consumidores especializados en ciertos nichos, como cervezas artesanales, o si su participación es más amplia y diversa. Además, permitirá observar si existen patrones en las calificaciones que otorgan: por ejemplo, si tienden a ser más críticos o, por el contrario, suelen otorgar puntuaciones más generosas.
+Integración de las Perspectivas
+
+Una vez analizadas estas tres perspectivas (producto, fabricante y consumidor), se podrán cruzar los resultados para obtener una visión más holística del mercado de cervezas. Por ejemplo:
+
+  * ¿Existen ciertos productos que, aunque reciben muchas revisiones, son evaluados de manera negativa o positiva por los consumidores más activos?
+
+  * ¿Cuáles son los fabricantes que logran posicionarse tanto en el top de revisiones por cantidad como en calidad de las evaluaciones recibidas?
+    
+  * ¿Cómo se correlaciona la popularidad de ciertos tipos de cerveza con las preferencias de los foreros más activos?
+
+Además, esta integración permitirá identificar posibles oportunidades de mercado para ciertos fabricantes. Si, por ejemplo, se detecta que un tipo de cerveza está ganando popularidad rápidamente entre los usuarios más activos, esto puede indicar una tendencia emergente en el consumo que los productores pueden aprovechar. También puede ayudar a identificar lagunas en el mercado: productos que, aunque no tienen muchas revisiones, podrían ser mejor aprovechados si se comercializan adecuadamente o si se incentiva la participación de consumidores en su evaluación.
+
+Este análisis exhaustivo del mercado cervecero desde varias perspectivas permitirá una comprensión profunda de las dinámicas de consumo, las preferencias de los usuarios y el posicionamiento de las marcas y productos en este mercado.
+
+
+Una vez discretizada la variable de tipos de cerveza, la primera tarea es  
+obtener el ranking de revisiones total del dataset.
+```{r}
+plot1 <- custom_barplot(df, beer_types, 14, "Reviews", "Types of Beers", 
+               "Total review per Total Subcategories")
+
+plot2 <-count_beers_summary(df, "Total number of beer by type and family" )
+
+plot_grid(plot1, plot2, ncol = 1, rel_heights = c(1, 1))
+```
+
+En el primer grafico puede verse el total de revisiones que tiene cada uno de los tipos de cerveza.
+Las 6 categorias superiores suponen alrededor del 80% del total de  las revisiones.
+A excepcion de la pale lager, todas son cervezas del tipo Ale son la Strong Ale, la Pale Ale, la IPA, la stout y la wheat.
+
+En el segundo grafico puede verse el catalogo de cervezas que compone el dataset y que se ha analizado previamente.
+Este grafico permite ver de una forma integrada el numero de cervezas que componen el catalogo y que porcentaje tiene cada subgrupo respecto del total.
+
+**Conclusiones Principales**
+
+  * 1 Predominio de las cervezas Ale: Innovación y diversidad en la producción
+
+El predominio de las cervezas Ale, que abarcan el 78% de los estilos de cerveza en el dataset, destaca la preferencia de los cerveceros artesanales por este tipo de fermentación. Las cervezas Ale tienen un proceso de fermentación más rápido y flexible que las Lager, permitiendo a los productores experimentar con una amplia variedad de ingredientes, sabores y técnicas. Esto es atractivo tanto para cerveceros como para consumidores, quienes valoran la innovación y la diversidad. La estructura de las Ale facilita la introducción de nuevas variantes como las IPAs, Stouts o las cervezas de trigo (Wheat), que ocupan un lugar destacado en ambos gráficos.
+
+Es interesante observar que los nueve estilos de Ale presentes en el conjunto de datos no solo dominan en términos de producción, sino que también ofrecen diferentes subtipos con perfiles de sabor variados y sofisticados. Estos abarcan desde las ligeras y refrescantes Pale Ale, hasta las más oscuras y robustas Stouts, pasando por las cervezas de trigo (Wheat), conocidas por su carácter afrutado y especiado. Esta diversidad en estilos ayuda a satisfacer una amplia gama de gustos y preferencias de los consumidores.
+
+  * 2. Desempeño de las cervezas más revisadas: ¿Qué buscan los consumidores en las cervezas?
+
+El análisis de las revisiones de cerveza resalta cómo los consumidores prefieren estilos con perfiles de sabor intensos o complejos. Esto se evidencia en la dominancia de las cervezas Strong Ale, Pale Ale, y IPA, que juntas acumulan alrededor del 45% de las revisiones totales. Estas cervezas son conocidas por ofrecer una experiencia más rica y diversa en términos de sabor y, por tanto, generan más discusiones y opiniones en plataformas de reseñas.
+
+  + Strong Ale (15.43%): Este estilo, a menudo con un alto contenido alcohólico y sabores complejos, es muy apreciado por consumidores experimentados que disfrutan de cervezas que desafían sus paladares. Las Strong Ale a menudo incluyen notas de frutas secas, especias y caramelo, lo que las hace ideales para quienes buscan explorar sabores profundos y comentarlos en reseñas.
+
+  + Pale Ale (15.14%): Las Pale Ale, por otro lado, ofrecen un equilibrio entre malta y lúpulo, haciéndolas accesibles tanto para consumidores principiantes como para expertos. Esta accesibilidad, combinada con la posibilidad de experimentar con diferentes variedades de lúpulos, hace que este estilo esté constantemente evolucionando, lo que genera interés en los consumidores y se refleja en la cantidad de reseñas.
+
+  + IPA (14.79%): Las IPA son un estilo extremadamente popular dentro de la comunidad cervecera, especialmente entre los fanáticos de las cervezas artesanales. El alto contenido de lúpulo, que les otorga su característico amargor y aroma floral o cítrico, ha sido una tendencia en crecimiento, lo que explica su alto nivel de revisiones. Las IPA también permiten una gran versatilidad en la producción, con subestilos como las Double IPA o las Session IPA, lo que contribuye a su popularidad tanto en la producción como en las revisiones.
+
+  * 3 Diferencias entre producción y revisiones: El caso de la Pale Lager y otros estilos Lager
+
+La Pale Lager presenta una disparidad interesante. A pesar de ser la segunda categoría más producida (12.51% del total), es significativamente menos revisada (8.36%). Este fenómeno puede deberse a varias razones:
+
+  + Sabor y complejidad percibida: Las Lager, especialmente las Pale Lager, tienden a tener un perfil de sabor más suave y menos complejo que otras cervezas como las Ale. Son cervezas ligeras, refrescantes y fáciles de beber, lo que las hace populares para el consumo masivo, pero no necesariamente generan el mismo nivel de interés o discusión que los estilos más robustos y aventureros, como las Strong Ale o IPA. Esto se refleja en la menor cantidad de revisiones, ya que muchos consumidores no sienten la necesidad de comentar sobre un estilo que perciben como “estándar” o sin sorpresas.
+
+  + Consumo cotidiano: Las Pale Lager son a menudo elegidas por su facilidad de beber y porque se asocian con el consumo diario o en grandes eventos sociales. Sin embargo, este tipo de consumo masivo no está relacionado con la cultura de revisar y discutir sobre los matices del sabor. Por eso, aunque sean populares en producción, no generan el mismo nivel de engagement en las plataformas de reseñas.
+
+  * 4 Estilos de nicho: Wild/Sour y Hybrid
+
+Aunque estilos como Wild/Sour y Hybrid representan una pequeña porción tanto en términos de producción como de revisiones, es importante destacar que estos estilos tienden a atraer a un público especializado y conocedor. Las Wild/Sour se caracterizan por su acidez, que proviene de la fermentación con levaduras salvajes o bacterias, lo que les otorga un sabor distintivo y a menudo desafiante para el paladar tradicional. Estas cervezas pueden ser menos comunes en términos de producción (solo un 2.29%), pero han ganado popularidad en los últimos años entre los entusiastas de la cerveza artesanal.
+
+Las cervezas Hybrid, que solo representan un 0.93% del total, también ocupan un lugar interesante en el mercado. Estas cervezas combinan elementos de estilos tradicionales para crear nuevas experiencias de sabor, lo que las hace atractivas para consumidores que buscan algo diferente, aunque su nicho es relativamente pequeño.
+
+  * 5 Tendencias globales y crecimiento del mercado artesanal
+
+En un contexto más amplio, el auge de las cervezas artesanales en la última década ha hecho que estilos como las IPA, Stouts, y Sour ganen una gran tracción. El público que busca reseñar cervezas suele estar compuesto por aficionados a la cerveza artesanal que valoran la originalidad, la experimentación con ingredientes y la variedad. Estos consumidores tienden a evitar estilos más industriales como las Lager, a menos que presenten características únicas.
+
+Las IPA, en particular, han crecido de manera exponencial en popularidad en Norteamérica y Europa, siendo uno de los estilos más representativos de la revolución cervecera artesanal. Esto explica por qué, a pesar de ser solo el 9.2% del catálogo de cervezas, las IPA representan un 14.79% de las revisiones.
+
+  * 6 El papel del marketing y la comunidad en la cultura de revisiones
+
+Otra variable importante a considerar es el papel del marketing y las comunidades en línea en la proliferación de revisiones. Las cervezas artesanales, particularmente las Ale, suelen beneficiarse de campañas de marketing que subrayan su singularidad, su método de producción y los ingredientes utilizados. Esto incentiva a los consumidores a escribir reseñas y compartir sus opiniones en plataformas dedicadascomo es el caso que nos ocupa BeerAdvocate o BeerRate. Los estilos que fomentan la discusión sobre sabor, cuerpo y aroma, factores determinantes de la formacion de la nota global, como las Strong Ale, IPA y Stouts, dominan estas comunidades.
+
+\newpage
+
+## Ranking Top 10 de las cervezas mas analizadas.
+
+```{r}
+top_ten_review <- head(df %>%group_by(beer_name) %>%
+count( beer_name,brewery_name, beer_types, sort = TRUE),10)
+
+plot1 <-custom_barplot(df, beer_name, 10, "Reviews", "Type of Beers",
+                       " Top-10 most reviewed Beers")
+plot2 <-custom_barplot(top_ten_review,beer_types, 4, "Reviews", "Type of Beers",
+                       "Distribution subcategory Top-10 most reviewed")
+plot_grid(plot1, plot2, ncol = 1, rel_heights = c(2, 1))
+```
+
+**1. Diversificación dentro de las categorías principales (IPA y Strong Ale)**
+
+El mercado en este top 10 está claramente dominado por las cervezas Ale, que representan el 90% del total. Esto refleja la tendencia observada previamente en los datos globales del catálogo de cervezas, donde las Ale dominan la producción y las revisiones. Dentro de este top 10, las dos categorías clave son las IPA (50%) y las Strong Ale (30%).
+
+  * Las IPA como categoría dominante: La categoría IPA sigue siendo la más competida y atractiva tanto para los productores como para los consumidores, como lo demuestran las cinco cervezas en el top 10. La fuerte presencia de este estilo muestra que el mercado de cervezas artesanales valora cervezas con perfiles de sabor marcados por el lúpulo y el amargor. Este estilo es popular no solo en términos de producción, sino también en revisiones, lo que indica que los consumidores están particularmente interesados en comparar y discutir las distintas variaciones de IPA que ofrecen las cervecerías.
+
+  * Competencia dentro del segmento IPA: La categoría IPA está altamente fragmentada, lo que demuestra una competencia intensa entre productores como Stone Brewing, Dogfish Head y Bell’s Brewery (con la Two Hearted Ale). En este segmento, Stone Brewing destaca con dos cervezas en el top 10 (Stone Ruination IPA y Stone IPA), lo que refuerza su posición como un jugador clave en el mercado de IPA. Aunque ningún productor domina abrumadoramente, es interesante notar cómo Stone Brewing logra una mayor presencia, lo que podría deberse a su capacidad para diferenciar sus cervezas dentro de un estilo tan competido.
+
+  * Strong Ale: menos competida, pero muy equilibrada: Aunque solo el 30% de las cervezas del top 10 pertenecen a esta categoría, la Strong Ale mantiene una competencia más equilibrada. Ningún productor tiene una ventaja clara, lo que sugiere que la preferencia del consumidor en este estilo depende más de la marca individual que de una ventaja competitiva pronunciada. Arrogant Bastard Ale, de Stone Brewing, es un fuerte competidor en este segmento, reforzando la presencia diversificada de la cervecería en ambos segmentos clave (IPA y Strong Ale).
+
+**2. Monopolios en Stouts y Pale Ale: estrategias de nicho**
+
+El análisis revela que dos cervezas, una en la categoría de Stout y otra en Pale Ale, dominan por completo sus respectivos segmentos:
+
+  * North Coast con Old Rasputin Russian Imperial Stout: Esta cerveza destaca como la única representante de la categoría Stouts en el top 10. El hecho de que domine el mercado de revisiones de Stouts sugiere que North Coast ha logrado posicionar esta cerveza como un producto insignia. Old Rasputin es conocida por su carácter robusto y profundo, lo que atrae a consumidores que buscan una experiencia más intensa y compleja. 
+
+  * Sierra Nevada y su doble presencia: Sierra Nevada ocupa una posición única en el mercado. Su Pale Ale no solo es la única representante de su estilo en el top 10, sino que también ha logrado mantenerse como una de las cervezas más revisadas en general, a pesar de que las Pale Ale han sido superadas en popularidad por las IPA en la última década. El éxito de Sierra Nevada Pale Ale puede deberse a su longevidad y reconocimiento en el mercado, lo que le otorga una ventaja monopolística en la categoría de Pale Ale. Además, la cervecería también compite en el mercado de IPA con su Celebration Ale, lo que refuerza su presencia en múltiples categorías clave.
+
+**3. Presencia multiple de Stone Brewing: Liderazgo en IPA y Strong Ale**
+
+Un aspecto interesant es la presencia destacada de Stone Brewing, que compite en dos de las categorías más fuertes: IPA y Strong Ale. Su capacidad para diversificarse en estos dos segmentos de alto rendimiento le da una ventaja estratégica. Stone Brewing no solo ha logrado posicionarse con dos cervezas IPA en el top 10 (Stone Ruination IPA y Stone IPA), sino que también ha entrado en el segmento de Strong Ale con la icónica Arrogant Bastard Ale.
+
+Esta estrategia de diversificación sugiere que Stone Brewing ha conseguido equilibrar la innovación en el mercado de IPA, que es altamente competido, con su liderazgo en el mercado de Strong Ale, donde el equilibrio competitivo es más pronunciado. Esto también muestra que la cervecería ha conseguido captar tanto a consumidores que buscan experiencias intensas y lupuladas (en el caso de las IPA) como a aquellos que prefieren cervezas más robustas y con un perfil de sabor más complejo (como las Strong Ale).
+
+**4. Equilibrio entre productores promedio y líderes de mercado**
+
+El mercado de cervezas artesanales representado en este top 10 revela una división interesante entre cervecerías que operan como "monopolistas" en sus categorías y aquellas que son competidores promedio en un solo segmento.
+
+  * Competidores monopólicos: North Coast y Sierra Nevada han consolidado su dominio en las categorías Stouts y Pale Ale, respectivamente, al mantener una presencia clara y única en estas categorías. Este dominio podría deberse a la dificultad que otros productores tienen para crear cervezas que compitan directamente con estos productos de alta calidad y gran reconocimiento.
+
+  * Competidores promedio: Otras cervecerías que aparecen en el top 10, como Bell’s Brewery (con su Two Hearted Ale) o Dogfish Head (con la 90 Minute IPA), compiten principalmente en el segmento de IPA o Strong Ale, pero no tienen la misma presencia dominante que Stone Brewing o Sierra Nevada. Estas cervecerías siguen siendo actores importantes, pero su enfoque se mantiene más en la innovación dentro de una sola categoría.
+
+**5. Conclusiones finales sobre la competencia en el top 10**
+
+En resumen, el análisis del top 10 de cervezas más revisadas nos ofrece una visión clara del panorama competitivo en el mercado de cervezas artesanales. Las IPA y Strong Ale son las categorías más dinámicas y competidas, con una fragmentación notable en la participación de mercado. Sin embargo, hay casos de monopolio evidente en estilos como Stout y Pale Ale, donde productores clave como North Coast y Sierra Nevada han asegurado posiciones dominantes.
+
+Stone Brewing destaca por su estrategia multifacética al competir exitosamente en dos de los estilos más importantes, mientras que otros competidores mantienen su enfoque en una sola categoría clave. Este equilibrio entre especialización y diversificación es un reflejo de las tendencias más amplias en el mercado de cervezas artesanales, donde la innovación y la capacidad para crear productos icónicos juegan un papel crucial en la preferencia de los consumidores y el éxito de las cervecerías.
+
+```{r}
+plot1 <-stacked_barplot_custom (top_ten_review,"beer_types","brewery_name","n",
+                                "Top-10 Beer type & Brewery Distribution")
+plot2 <-plot_percentage_per_subcategory(top_ten_review, "beer_types",
+                                        "brewery_name", 
+      "Market share of each brewery by type of beer Top-10")
+plot_grid(plot1, plot2, ncol = 1, rel_heights = c(1, 1))
+```
+
+\newpage
+
+## Ranking Top 10 de empresas cerveceras.
+
+La mitad del total de reviews se concentran en las primeras cinco empresas.
+Se procede a analizar el top3
+
+```{r}
+custom_barplot(df, brewery_name, 10, "Reviews","Brewery Name", 
+               "Top-10 Most reviewd Breweries")
+```
+\newpage
+
+### Analisis top3 de productores.
+### **1.- Boston Beer Company (Samuel Adams)**
+```{r}
+Boston_Beer_prod <- df[df$brewery_name == "Boston Beer Company (Samuel Adams)",]
+calcular_valores_cerveza(Boston_Beer_prod)
+```
+
+```{r}
+BB <- Boston_Beer_prod %>%
+  group_by(beer_families, beer_types) %>%
+  summarise(count = n(), .groups = 'drop')
+
+p1 <- donut_count(BB,title ="Boston_Beer Reviews Distribution")
+p2 <- donut_total (Boston_Beer_prod, title = "Boston_Beer Number of Beers")
+plot_grid(p1, p2, ncol = 2, rel_heights = c(2, 2))
+```
+
+**Analisis de Produccion**
+
+El caso de Boston Beer es especialmente interesante dentro de este dataset. La empresa cuenta con 97 cervezas diferentes evaluadas, lo que la convierte en una de las cerveceras con un catálogo más amplio y variado. A diferencia de otras cerveceras que se centran en unos pocos productos estrella, Boston Beer no depende de uno o dos productos icónicos para destacarse en el mercado. Su enfoque parece estar en la diversificación y la cobertura de múltiples estilos de cerveza, lo que le permite llegar a diferentes segmentos del mercado.
+
+Boston Beer cubre todas las familias de cerveza: Ale, Lager, y Others, lo que refuerza su estrategia de diversificación. El hecho de que produzca cervezas en todas las categorías más populares, así como en estilos menos comunes como Specialty y Hybrid, sugiere que busca captar tanto a los consumidores tradicionales como a los entusiastas que buscan probar algo único.
+
+Un aspecto particular de Boston Beer es que, a pesar de su amplia gama de cervezas, ninguna cerveza individual acumula un número significativamente alto de revisiones en comparación con otras empresas cerveceras.  Mientras que otras marcas dependen de uno o dos productos estrella que concentran la mayor parte de las revisiones, Boston Beer alcanza su éxito en el mercado porque muchas de sus cervezas tienen más de 1.000 reseñas cada una, lo que es un indicador de su capacidad para producir cervezas consistentes y populares en diferentes categorías. 
+
+**Analisis de revisiones**
+
+Las Ale dominan en términos de revisiones, lo que es consistente con su popularidad en el mercado de cervezas artesanales, donde los consumidores suelen buscar variedades más complejas y sabores diversificados. Las Lager también tienen una presencia considerable con más de un tercio de las revisiones.
+
+En la familia Ale, el estilo Wheat (cerveza de trigo) es el más revisado, representando más del 27% de las revisiones. Esto es interesante, ya que el estilo Wheat es apreciado por su sabor suave y refrescante, lo que lo hace popular entre una amplia gama de consumidores. El segundo estilo más revisado es la Pale Ale, seguido de la Strong Ale y la IPA, lo que refleja la importancia de los estilos lupulados y de alto contenido alcohólico en el mercado artesanal.
+
+Dentro de la familia Lager, las Dark Lager son el estilo más revisado, representando más del 40% de las revisiones. Esto indica que las versiones más oscuras y maltosas de Lager son muy apreciadas por los consumidores. El estilo Bock también tiene una representación considerable con más de un tercio de las revisiones, mientras que las Pale Lager, aunque populares en términos de producción masiva, tienen una menor cantidad de revisiones, lo que podría sugerir que son más comunes en el mercado general, pero no generan tanto interés en los entusiastas de las cervezas especializadas.
+
+La categoría Others con un 10% merece un breve comentario. Las cervezas Specialty dominan con el 89.24% de las revisiones. Esto sugiere que las cervezas experimentales o ediciones especiales tienen un gran atractivo entre los consumidores que buscan algo único o fuera de lo común.
+
+**Conclusiones Cruzadas: Producción vs Revisiones**
+
+El análisis de producción y revisiones revela que Dogfish Head tiene un enfoque claro en la familia Ale, especialmente en estilos como IPA, Strong Ale, y Pale Ale. Estos estilos no solo dominan su producción, sino que también son los más revisados, lo que indica una alineación entre la oferta y la demanda del mercado.
+
+En cuanto a las Lager, Dogfish Head produce una cantidad limitada, con un foco claro en las Pale Lager, aunque estas cervezas reciben pocas revisiones en comparación con las Ale. Finalmente, la categoría Specialty, dentro de Others, destaca por la alta producción y el número considerable de revisiones, lo que subraya el papel central de la innovación y la experimentación en su estrategia.
+
+En resumen, Dogfish Head ofrece una gama diversa de cervezas con un claro enfoque en el segmento artesanal (Ale), complementado por un fuerte compromiso con la innovación en estilos únicos (Specialty).
+
+\newpage
+
+### **2.- Dogfish_Head_Brewery**
+
+```{r}
+Dogfish_Head_Brewery <- df[df$brewery_name == "Dogfish Head Brewery",]
+calcular_valores_cerveza(Dogfish_Head_Brewery)
+```
+
+```{r}
+DH <- Dogfish_Head_Brewery %>%
+  group_by(beer_families, beer_types) %>%
+  summarise(count = n(), .groups = 'drop')
+
+p1 <- donut_count(DH,title ="Dogfish_Head Reviews Distribution")
+p2 <- donut_total(Dogfish_Head_Brewery,"Dogfish_Head Number of  Beer")
+plot_grid(p1, p2, ncol = 2, rel_heights = c(2, 2))
+```
+\newpage
+
+**Analisis de produccion**
+
+Dogfish Head Brewery es una cervecera que, al igual que Boston Beer, se caracteriza por su amplia oferta, pero con una estrategia de mercado que pone un fuerte énfasis en ciertos productos estrella y en un segmento muy específico. Este análisis examinará su estrategia de producto en relación con las revisiones de los consumidores y su posición en el mercado cervecero, con un enfoque particular en los estilos de cerveza que fabrica y la concentración de revisiones que reciben sus principales cervezas.
+
+Dogfish Head cuenta con una oferta variada que abarca 100 cervezas distribuidas principalmente entre las familias Ale (75 cervezas), Others (14 cervezas), y Lager (11 cervezas). Este portafolio diversificado le permite competir en varios segmentos del mercado cervecero. Sin embargo, la estructura de su catálogo y el análisis de las revisiones revelan que la mayor parte de su éxito comercial proviene de un pequeño número de productos altamente revisados, mientras que la mayoría de sus cervezas recibe mucha menos atención.
+
+El 80% de las revisiones totales en Dogfish Head provienen de cervezas tipo Ale, lo que refuerza su enfoque en este segmento artesanal. Las IPA son el estilo más revisado, representando un 43.4% de las revisiones dentro de la categoría Ale. Esto refleja la estrategia de la empresa de centrar sus esfuerzos en productos intensamente lupulados y de sabores novedosos, que han demostrado ser muy populares entre los consumidores de cervezas artesanales. Las Strong Ale y Brown Ale también destacan en el portafolio de la marca, representando un 19.5% y 12.9% de las revisiones, respectivamente, lo que indica que la cervecería atrae a consumidores que prefieren cervezas con mayor cuerpo, variedad y complejidad de sabores.
+
+En cuanto a la familia Lager, representa solo el 3% de las revisiones totales, y dentro de este grupo, las Pale Lager son el estilo dominante con 93.9% de las revisiones. Esto sugiere que Dogfish Head dedica una parte muy pequeña de su producción a este estilo, en gran parte orientado hacia el consumo masivo, lo cual es coherente con su enfoque en cervezas artesanales más exclusivas.
+
+En la categoría Others, que representa el 17.3% de las revisiones, se concentra completamente en las cervezas Specialty. Esto sugiere que Dogfish Head ha apostado fuertemente por la innovación y la experimentación en este segmento, lanzando cervezas únicas o ediciones limitadas que capturan el interés de los consumidores que buscan experiencias fuera de lo común. La importancia de este segmento demuestra el compromiso de la marca con la diferenciación a través de productos que rompen con las convenciones tradicionales del mercado cervecero.
+
+**Analisis de revisiones**
+
+Aunque Dogfish Head tiene un catálogo extenso, su éxito comercial está fuertemente concentrado en un reducido número de cervezas estrella. En este sentido, el caso de Dogfish Head difiere de Boston Beer, ya que cuenta con una clara dependencia de algunos productos icónicos. Las dos cervezas más importantes de la marca, ambas en la categoría de American IPA, suman más de 11,500 revisiones en conjunto, lo que representa una parte significativa de todas las revisiones totales.
+
+Además, Dogfish Head tiene otras dos cervezas altamente revisadas dentro de la familia Ale, específicamente en los estilos Brown Ale y Stouts, lo que refuerza su éxito en el segmento de cervezas oscuras y maltosas. Sin embargo, fuera de su Top 10, el número de revisiones cae drásticamente, con menos de 1,000 reseñas en su Top 20 y menos de 10 revisiones en su Top 30 en adelante. Esto revela una estructura de portafolio donde unos pocos productos dominan la atención y el interés de los consumidores, mientras que el resto del catálogo tiene una visibilidad limitada.
+
+**Conclusiones Cruzadas: Oferta y Demanda en Dogfish Head**
+
+El análisis cruzado de la producción y las revisiones indica una fuerte alineación entre la oferta de Dogfish Head y la demanda del mercado. La empresa se ha especializado en cervezas artesanales del tipo Ale, particularmente en estilos lupulados como IPA, y en cervezas más complejas como Strong Ale y Brown Ale. Esto coincide con las tendencias del mercado artesanal, donde los consumidores valoran sabores intensos y originales. A pesar de su extenso catálogo, Dogfish Head depende fuertemente de unos pocos productos estrella que concentran la mayor parte de las revisiones, lo que puede implicar un riesgo a largo plazo si estos productos pierden popularidad.
+
+Por otro lado, su enfoque en la categoría Specialty dentro de Others resalta su apuesta por la innovación, lo cual le permite mantener un segmento de consumidores leales que buscan experiencias exclusivas y ediciones limitadas. No obstante, su producción limitada en estilos Lager sugiere que Dogfish Head se posiciona deliberadamente fuera del mercado de cervezas más convencionales, concentrándose en mantener su identidad artesanal y diferenciada.
+
+En resumen, Dogfish Head ofrece una gama de cervezas que se caracteriza por un enfoque intensivo en el segmento artesanal, con especial énfasis en las IPA y otros estilos de Ale. Su estrategia se centra en captar tanto a los consumidores que buscan sabores lupulados y atrevidos como a aquellos que prefieren cervezas más complejas y experimentales. Aunque su catálogo es extenso, la cervecería depende en gran medida de un pequeño grupo de cervezas estrella para generar la mayor parte de sus revisiones y reconocimiento en el mercado. La apuesta por la innovación en la categoría Specialty refuerza su posicionamiento como una marca creativa, aunque su limitado enfoque en Lager sugiere que no busca competir en el segmento masivo, sino en un nicho premium y artesanal.
+
+\newpage
+
+### **3.- Stone_Brewing_Co_products**
+```{r}
+Stone_Brewing_Co_products <- df[df$brewery_name == "Stone Brewing Co.",]
+
+custom_barplot(Stone_Brewing_Co_products, beer_style, 10, 
+               "Total Reviews", "Beer Subcategory", "Stone Brewing Co.")
+```
+
+```{r}
+count_beers_summary(Stone_Brewing_Co_products,"Stone_Brewing Number of Beers" )
+```
+[Nota: Se representa con barplots esta cervecera, ya que la concentracion tan alta en Strong Ale, IPA y Stouts, impide visualizar correctamente el resto de variedades mediante un piechart].
+
+**Analisis de Producción**:
+
+Stone Brewing Co. se distingue en el sector cervecero por su catálogo relativamente reducido, que comprende únicamente 30 referencias. A pesar de este número limitado, la empresa ha logrado destacar a través de dos productos clave: la American Strong Ale y la American IPA, que acumulan una significativa cantidad de revisiones, evidenciando su estatus como productos estrella en su oferta.
+
+
+El análisis de las revisiones revela que el top 10 de Stone Brewing presenta una notable consistencia en la cantidad de análisis, lo cual es indicativo de la popularidad de sus cervezas. Este top 10 se compone predominantemente de estilos americanos, que son los más analizados dentro del ranking de los 14 tipos de cerveza, justificando así su posición competitiva en el mercado. La empresa se beneficia de tener un par de cervezas que no solo lideran en sus respectivas categorías, sino que también son reconocidas a nivel nacional.
+
+Stone Brewing Co. exhibe un fuerte enfoque en la producción de cervezas de tipo Ale, con 116 variedades en esta categoría, representando cerca del 97% de su producción total. Dentro de este grupo, destacan principalmente tres estilos: Strong Ale, IPA y Stouts. La American Strong Ale es particularmente significativa, ya que constituye casi la mitad de la producción de Ale, reflejando el compromiso de la empresa con estilos de alta graduación alcohólica y sabores intensos.
+
+En contraposición, la producción de cervezas Lager es mínima, limitándose a solo dos variantes: Dark Lager y Pale Lager. Esta escasa representación sugiere que el estilo Lager no es una prioridad estratégica para la empresa. Del mismo modo, la categoría Others está representada por una sola cerveza en el subgrupo Specialty, lo que indica un interés en explorar nichos experimentales, aunque no como un enfoque central.
+Análisis de Revisiones
+
+La American Strong Ale se erige como el estilo más revisado, acumulando un 28.07% del total de las revisiones, lo que subraya su popularidad entre los consumidores. Otros estilos también relevantes son el American Double / Imperial IPA (14.97%) y el Russian Imperial Stout (10.22%), que refuerzan el atractivo de las cervezas de alto contenido alcohólico y sabores complejos. Estos estilos suelen captar la atención de un público cervecero más especializado y conocedor.
+
+Además, Stone Brewing ha ganado reconocimiento en otros estilos como el American IPA (9.79%), American Black Ale (8.13%) y American Barleywine (7.28%), diversificando su oferta mientras se mantiene fiel a su enfoque en cervezas intensas.
+Conclusión Global
+
+Stone Brewing Co. se posiciona claramente en el mercado artesanal como una marca orientada hacia cervezas de alta intensidad, con un enfoque en estilos de Ale robustos y de alta graduación alcohólica. La American Strong Ale y el American Double / Imperial IPA son pilares fundamentales de su oferta y preferencias de los consumidores, constituyendo una parte sustancial de las revisiones y la producción.
+
+A pesar de la limitada presencia de Lager y cervezas en la categoría Others, la oferta de Stone Brewing está claramente dirigida hacia un segmento de consumidores que buscan sabores potentes e intensos. Esto se manifiesta en la buena aceptación de estilos como el Russian Imperial Stout y el American Black Ale, complementando una propuesta diversificada pero centrada en la intensidad de sabor.
+
+Desde una perspectiva estratégica, la cervecera se dirige a un público especializado que prefiere cervezas fuertes y experimentales, lo que le permite mantener un nicho sólido y bien definido en el competitivo mercado cervecero artesanal.
+
+**Análisis Comparativo de las Estrategias de Producción y Revisión de Tres Empresas Cerveceras**
+
+A continuación se presenta un análisis integral de tres destacadas cerveceras: Boston Beer, Dogfish Head Brewery y Stone Brewing Co., con base en los datos de producción y revisiones disponibles. Este análisis tiene como objetivo proporcionar una visión experta de las estrategias de diversificación de producto, preferencias del mercado y posicionamiento competitivo de estas empresas en el sector cervecero artesanal.
+
+**Boston Beer: Estrategia de Diversificación**
+
+**Producción**
+
+Boston Beer destaca por su amplio portafolio de productos con 97 cervezas revisadas en su catálogo. La empresa ofrece una cobertura total de estilos de cerveza, con presencia en todas las familias: Ale, Lager y Others, lo que indica una fuerte estrategia de diversificación. En términos de producción:
+
+  Ale es su foco principal, con una producción significativa de subestilos como IPA (13 variedades) y Strong Ale (15 variedades).
+  La producción de Lager es también considerable (22 cervezas), con subtipos como Pale Lager y Bock.
+  En la categoría Others, Boston Beer ofrece cervezas Specialty y Hybrid, lo que subraya su enfoque en la innovación.
+
+**Revisiones**
+
+A pesar de tener un portafolio extenso, Boston Beer no depende de productos estrella. No tiene una cerveza individual que concentre un gran número de reseñas, sino que su éxito se basa en que muchas de sus cervezas superan las 1,000 reseñas, lo que refleja una aceptación generalizada y un compromiso con la consistencia de la calidad en múltiples categorías.
+
+**Conclusión**
+
+Boston Beer utiliza una estrategia de diversificación que abarca tanto estilos populares como cervezas innovadoras. Su éxito radica en su capacidad para captar a diversos segmentos del mercado sin depender de uno o dos productos principales, lo que le otorga estabilidad y reconocimiento en múltiples categorías.
+
+
+**Dogfish Head Brewery: Innovación y Enfoque en Ale**
+
+**Producción**
+
+Dogfish Head Brewery produce 100 cervezas, con un claro enfoque en las Ale, que representan el 75% de su oferta. Dentro de esta familia, destaca la producción de IPA (14 variedades), Strong Ale (13 variedades) y otros subestilos como Stouts y Brown Ale. La empresa también produce una cantidad moderada de cervezas en la categoría Others (14 cervezas, todas ellas Specialty), lo que refuerza su reputación por la innovación y experimentación.
+
+**Revisiones**
+
+Dogfish Head se caracteriza por tener un top 5 muy fuerte en cuanto a revisiones. En especial, las variedades de American IPA son las más populares, con más de 11,500 reseñas acumuladas entre sus cervezas principales. Este éxito demuestra que la marca ha sabido posicionarse en el mercado artesanal, especialmente en el segmento de cervezas lupuladas y de sabores audaces.
+
+**Conclusión**
+
+La empresa sigue una estrategia centrada en las Ale, con un énfasis claro en las IPA y Strong Ale, que se reflejan tanto en su producción como en las reseñas. Aunque su catálogo es amplio, su éxito se apoya en un número selecto de cervezas estrella, principalmente en el segmento de cervezas intensas y de alta graduación alcohólica.
+Stone Brewing Co.: Enfoque en Productos Estrella
+Producción
+
+**Stone Brewing Co. **
+
+**Producción**
+
+Presenta una estrategia diferente, con un catálogo mucho más reducido, de solo 30 cervezas. Al igual que las otras cerveceras, Stone Brewing se enfoca principalmente en las Ale, que representan el 96.7% de su producción, destacando la producción de Strong Ale (52 variedades), IPA (21 variedades) y otras subcategorías como Stouts y Porters.
+Revisiones
+
+**Análisis de revisiones** 
+
+El catalogo muestra que Stone Brewing se apoya en dos productos estrella: American Strong Ale y American IPA, que concentran una gran parte de las revisiones, lo que indica que la empresa se basa en unos pocos productos muy populares. A diferencia de Boston Beer y Dogfish Head, Stone Brewing tiene un top 10 más consistente en términos de número de reseñas, lo que sugiere un enfoque más concentrado en unos pocos productos altamente demandados.
+
+**Conclusión**
+
+Stone Brewing se diferencia por tener una estrategia enfocada en un portafolio reducido, pero con productos muy bien posicionados en el mercado. Su éxito proviene de la popularidad de sus American Strong Ale y IPA, que son líderes en sus categorías y dominan las revisiones. Este enfoque en productos estrella le otorga un alto nivel de competitividad en el segmento de cervezas fuertes y de sabor intenso.
+
+**Conclusión Comparativa**
+
+En términos de estrategia de producción, Boston Beer sigue una ruta de diversificación, con una oferta amplia que cubre todas las familias de cerveza y múltiples subestilos. En contraste, Dogfish Head Brewery tiene un enfoque más concentrado en las Ale y en cervezas experimentales, mientras que Stone Brewing Co. se apoya en un catálogo reducido y en productos estrella, principalmente American Strong Ale y IPA.
+
+En cuanto a las revisiones, Dogfish Head destaca por tener un top 5 muy sólido, pero es Stone Brewing Co. la que se apoya en un top 10 consistente, con dos productos claramente dominantes. Por otro lado, Boston Beer sobresale por no depender de una sola cerveza estrella, sino por la constancia en la calidad de su portafolio.
+
+En conjunto, las tres empresas han seguido estrategias exitosas pero distintas, adaptándose a diferentes nichos del mercado cervecero artesanal. Boston Beer lidera en términos de diversificación, Dogfish Head capitaliza la innovación, y Stone Brewing se especializa en productos estrella de alta demanda.
+
+
+\newpage
+
+## Ranking Top10 reviewers.
+
+Por ultimo nos queda ver el perfil de los consumidores que mas revisiones 
+realizan.
+
+La idea subyacente es ver en que grado, estos perfiles mas conocedores de la 
+oferta global del mercado, se corresponden o no con el consumidor medio que ha 
+realizado revisiones para el foro Beer Advocate.
+
+```{r}
+custom_barplot(df, review_profilename,10,"Total Reviews", "User Nickname",
+               "Top-10 Users with more reviews ")
+```
+
+\newpage
+
+### 1.- northyorksammy
+
+El usuario que mas review realiza de todos el foro beer_advocate es 
+northyorksammy, con 5311 reviews. Su perfil abarca la totalidad de los estilos 
+de cervezas. 
+
+Su preferencia se fija en cervezas tipo Ale (Pale Ale, Strong Ale e IPA) asi
+como en Stouts y Pale Lager
+```{r}
+northyorksammy_reviews <- df[df$review_profilename == "northyorksammy",]
+calcular_valores_cerveza(northyorksammy_reviews)
+```
+```{r}
+NY_R <- northyorksammy_reviews %>%
+  group_by(beer_families, beer_types) %>%
+  summarise(count = n(), .groups = 'drop')  # Keep grouping after summarizing
+
+p1 <- donut_count(NY_R,title ="% Reviews northyorksammy")
+p2 <- donut_total(northyorksammy_reviews,title ="Num Beers northyorksammy")
+plot_grid(p1, p2, ncol = 2, rel_heights = c(2, 2))
+```
+**Perfil del Consumidor de Cerveza: northyorksammy**
+
+**Preferencias Generales:**
+
+Este usuario muestra una preferencia clara por las cervezas de la familia Ale, que constituyen el 79.44% de las cervezas reseñadas por él. Esto sugiere que disfruta de cervezas más variadas y complejas en términos de sabor, que tienden a ser más afrutadas, aromáticas y a menudo con mayor cuerpo que otras familias de cerveza.
+
+El 14% de sus reseñas se centran en cervezas de la familia Lager, mientras que 6.55% corresponden a estilos clasificados como Others, lo que indica una ligera inclinación hacia la experimentación con cervezas menos convencionales.
+
+Dentro de las Ale, el usuario muestra una apreciación por una gama diversa de estilos:
+
+   + Pale Ale (22.97% de las reseñas de Ale): Este es su estilo más reseñado dentro de las Ale, lo que indica que valora cervezas balanceadas, con un amargor moderado y notas suaves de malta. 
+
+   + Strong Ale (21.28%): Estas cervezas, con un contenido alcohólico más alto y sabores intensos, son otra preferencia importante. Esto sugiere que el usuario busca cervezas más robustas y con cuerpo.
+
+   + IPA (India Pale Ale) (16.31%): La popularidad de las IPA entre sus reseñas refleja su gusto por cervezas lupuladas, con un amargor más pronunciado y un perfil aromático distintivo.
+
+   + Stouts (13.01%) y Porters (6.28%): Estas cervezas oscuras y maltosas, con notas de café, chocolate y malta tostada, también forman parte de sus preferencias. Esto sugiere que en ocasiones prefiere cervezas con más riqueza y profundidad de sabor.
+
+   + Wheat (6.71%): Las cervezas de trigo, con su perfil suave y refrescante, también tienen un lugar en sus reseñas.,
+
+**Este desglose refleja que, aunque el usuario tiene una inclinación hacia sabores más fuertes y complejos, también valora opciones más ligeras como las Wheat Ale.**
+
+Aunque las Lager representan una porción menor de sus reseñas (14.01%), dentro de esta familia se observa una preferencia clara por:
+
+   + Pale Lager (50.94% de las Lager): Las Pale Lager, con su perfil más ligero y refrescante, son su opción favorita dentro de este grupo. Esto podría sugerir que cuando opta por una Lager, busca una cerveza más fácil de beber, quizás en situaciones más casuales o en épocas de calor.
+
+   + Dark Lager (24.73%) y Bock (24.33%): Aunque en menor medida, también reseña cervezas más oscuras dentro de la familia Lager, lo que indica que en ocasiones disfruta de opciones más ricas y malteadas, pero no tanto como las Pale Lager.
+
+Las cervezas de la categoría Others constituyen el 6.55% de sus reseñas, lo que indica que no son su opción principal, pero aún así están presentes en su radar: espcialemente son de su interes las cervezas Specialty con un  85.34% de Others.Esto revela  un deseo de explorar lo novedoso y lo exclusivo, aunque estas reseñas representan una pequeña porción de su actividad total.
+
+**Conclusiones del perfil del consumidor:**
+
+   + Fuerte inclinación hacia las Ale: Este usuario claramente disfruta de las cervezas de la familia Ale, particularmente aquellas que ofrecen más cuerpo y complejidad, como las Strong Ale, IPA y Stouts. Estas cervezas suelen tener sabores más intensos y un perfil más aromático, lo que sugiere que este consumidor aprecia la variedad y la intensidad de sabores que ofrecen las cervezas artesanales.
+
+   + Gusto moderado por Lager: Aunque no es su elección principal, cuando opta por una Lager, prefiere las Pale Lager, probablemente por su carácter refrescante y fácil de beber. Sin embargo, también disfruta de estilos más robustos como las Dark Lager y Bock, lo que muestra que aprecia la diversidad incluso dentro de esta familia más ligera.
+
+   + Exploración ocasional de cervezas especiales: Su interés en la categoría Specialty sugiere que, aunque la mayoría de sus preferencias están bien establecidas en las Ale y Lager, le gusta experimentar con cervezas innovadoras o ediciones limitadas de vez en cuando. Esto podría indicar que disfruta de las sorpresas y de descubrir nuevas tendencias en el mundo de la cerveza.
+
+   + Diversidad en los estilos dentro de Ale: Aunque las Pale Ale son su estilo más reseñado, el usuario también tiene un gusto marcado por las cervezas más fuertes y oscuras como las Strong Ale, IPA y Stouts. Esto muestra una apreciación por las cervezas con mayor carácter, pero también un equilibrio con opciones más suaves como las Wheat o Porters, lo que sugiere que su consumo de cerveza varía según la ocasión.
+
+**Perfil de consumo resumido:**
+
+Este usuario es un consumidor inquisitivo, con una clara predilección por las cervezas artesanales del tipo Ale, particularmente aquellas con sabores fuertes, complejos y lupulados. Sin embargo, mantiene un gusto equilibrado por opciones más ligeras como las Pale Lager y las Wheat Ale, lo que sugiere que adapta su consumo de cerveza a diferentes situaciones y estados de ánimo. Además, su inclinación ocasional hacia cervezas Specialty revela que, aunque tiene preferencias bien definidas, no teme explorar cervezas fuera de lo común cuando busca una experiencia diferente.
+
+En resumen, este perfil refleja a un consumidor apasionado por la cerveza artesanal, con un enfoque particular en los sabores más intensos, pero que también disfruta de explorar nuevos estilos y experimentar con diferentes opciones en el mundo cervecero.
+
+\newpage
+
+### 2.- BuckeyeNation
+
+```{r}
+BuckeyeNation_reviews <- df[df$review_profilename == "BuckeyeNation",]
+calcular_valores_cerveza(BuckeyeNation_reviews)
+```
+
+
+
+```{r}
+BN_R <- BuckeyeNation_reviews %>%
+  group_by(beer_families, beer_types) %>%
+  summarise(count = n(), .groups = 'drop')  # Keep grouping after summarizing
+
+p1 <- donut_count(BN_R, "BuckeyeNation % Reviews")
+p2 <- donut_total(BuckeyeNation_reviews, "BuckeyeNation Num Beers")
+plot_grid(p1, p2, ncol = 2, rel_heights = c(2, 2))
+```
+
+```{r}
+count_beers_summary(BuckeyeNation_reviews )
+```
+**Perfil del Consumidor de Cerveza: "BuckeyeNation"**
+
+**Preferencias Generales:**
+
+El forero BuckeyeNation tiene una **marcada preferencia por las cervezas Ale, que constituyen el 72.88% de sus reseñas**. Las Ale suelen ser cervezas más complejas en términos de sabor y aroma, lo que sugiere que este consumidor tiene un paladar que **valora la diversidad y la intensidad de sabores.**
+
+Las **Lager, que representan el 20.57% de sus reseñas**, ocupan un segundo lugar importante en sus preferencias, lo que indica que también disfruta de cervezas más ligeras y refrescantes en comparación con las Ale. Por último, el **6.56% de sus reseñas corresponde a cervezas clasificadas como Others,** lo que muestra un interés ocasional por cervezas menos convencionales y más experimentales.
+Preferencias dentro de la familia Ale:
+
+Dentro de la familia Ale, BuckeyeNation tiene un rango diverso de preferencias que se distribuye entre varios estilos:
+
+  + Pale Ale (25.11% de las Ale): Es su estilo más reseñado, lo que sugiere que disfruta de cervezas balanceadas con un perfil accesible de amargor y malta. Las Pale Ale suelen ser cervezas versátiles, lo que refleja su preferencia por un estilo que puede ser disfrutado en una amplia variedad de contextos.
+
+  + Strong Ale (21.20%): Este porcentaje significativo de reseñas sugiere que BuckeyeNation también valora cervezas con un carácter más robusto, fuerte contenido alcohólico y sabores complejos. Esto muestra un interés por bebidas con mayor cuerpo y carácter.
+
+  + IPA (14.66%): Las India Pale Ale, con su perfil lupulado y amargo, son populares entre los consumidores que disfrutan de sabores intensos y aromas florales o cítricos. BuckeyeNation claramente aprecia este tipo de cervezas, aunque no es su estilo predominante.
+
+  + Stouts (10.52%): Este estilo oscuro y maltoso, con sabores a café o chocolate, es otra de sus preferencias notables. Las Stouts suelen ser apreciadas por su riqueza en sabor, lo que muestra que BuckeyeNation también busca opciones más densas y profundas.
+
+  + Wheat Ale (8.90%) y Porters (6.60%): Estas cervezas más suaves y con notas de trigo o maltas tostadas reflejan su gusto por opciones más ligeras y fáciles de beber, sin perder la complejidad. Las Porters, similares a las Stouts pero generalmente más ligeras, sugieren una inclinación por cervezas oscuras y aromáticas en menor medida.
+
+  + Brown Ale (5.47%) y Dark Ale (4.76%): Estas cervezas, que ofrecen sabores a malta tostada y un perfil más terroso o caramelizado, completan su preferencia por las cervezas oscuras. Aunque no son su primera opción, BuckeyeNation claramente las aprecia en momentos específicos.
+
+  + Wild/Sour Ale (2.78%): Su interés por las cervezas Wild o Sour, que son ácidas y frecuentemente experimentales, aunque minoritario, sugiere que también disfruta de probar opciones diferentes y más innovadoras dentro del mundo cervecero.
+
+**Preferencias dentro de la familia Lager:**
+
+Aunque la familia Lager no domina su repertorio, representa una parte importante de sus reseñas, especialmente:
+
+  + Pale Lager (57.45% de las Lager): Las Pale Lager, con su perfil más ligero y refrescante, son su estilo favorito dentro de esta familia. 
+
+  + Dark Lager (22.94%) y Bock (19.61%): A diferencia de muchos consumidores que prefieren solo las Pale Lager, BuckeyeNation también tiene un interés considerable por las Dark Lager y Bock, que son más oscuras y ricas en sabor. Esto refuerza la idea de que disfruta de cervezas con mayor cuerpo.
+
+**Preferencias dentro de la familia Others:**
+
+Las cervezas Others representan el 6.56% de sus reseñas totales, lo que sugiere un interés moderado por estilos no tradicionales:
+
+  + Specialty (89.21% de Others): El alto porcentaje de cervezas Specialty dentro de la familia Others sugiere que BuckeyeNation está disfruta experimentando con cervezas innovadoras o de edición limitada le gusta probar cervezas únicas y fuera de lo común.
+
+**Conclusiones del perfil del consumidor:**
+
+  + Inclinación fuerte hacia Ale con una notable diversidad de estilos: BuckeyeNation tiene una clara preferencia por las cervezas Ale, en particular las Pale Ale y Strong Ale, pero su gusto abarca desde cervezas lupuladas como las IPA hasta cervezas oscuras como las Stouts y Brown Ale. Este perfil muestra que disfruta de la variedad y la complejidad de sabores, valorando tanto cervezas más ligeras como otras más fuertes y con cuerpo.
+
+  + Preferencia destacada por Pale Lager dentro de las Lager: Dentro de la familia Lager, su inclinación hacia las Pale Lager sugiere que, cuando busca algo más refrescante, opta por cervezas ligeras y fáciles de beber. Sin embargo, también muestra un interés apreciable por las Dark Lager y las Bock, lo que revela que también busca opciones más ricas en sabor incluso dentro de la familia Lager.
+
+  + Exploración ocasional de cervezas innovadoras y experimentales: Su preferencia por cervezas Specialty dentro de la familia Others indica que está dispuesto a salir de su zona de confort y probar cervezas más raras o creativas. Aunque este no es su principal enfoque, sí muestra una disposición a explorar cervezas exclusivas o ediciones limitadas.
+
+  +  Gusto equilibrado entre cervezas ligeras y fuertes: Aunque sus preferencias principales se inclinan hacia cervezas con más cuerpo y complejidad, también mantiene un interés por opciones más ligeras como las Pale Lager, Wheat Ale, y Porters.
+
+
+\newpage
+
+### 3.- mikesgroove
+
+```{r}
+mikesgroove_reviews <- df[df$review_profilename == "mikesgroove",]
+calcular_valores_cerveza(mikesgroove_reviews)
+```
+
+```{r}
+MG_R <- mikesgroove_reviews %>%
+  group_by(beer_families, beer_types) %>%
+  summarise(count = n(), .groups = 'drop')  
+p1 <- donut_count(MG_R,title = "mikesgroove Reviews Distribution")
+p2 <- donut_total(mikesgroove_reviews,title = "mikesgroove Num Beers")
+plot_grid(p1, p2, ncol = 2, rel_heights = c(2, 2))
+```
+
+```{r}
+count_beers_summary(mikesgroove_reviews,  "Mikesgroove Number of Beers")
+```
+
+**Perfil de Consumo de Cerveza para el Forero mikesgroove**
+
+El forero mikesgroove muestra una fuerte preferencia por las cervezas del tipo Ale, que representan el 80.7% de su total de reseñas, seguido de cervezas Lager (13.3%) y una menor cantidad en la categoría de Others (6%). Este perfil sugiere que su gusto se inclina hacia las cervezas artesanales de mayor complejidad, típicas de las Ales, pero con una apreciación también por algunas Lager y cervezas innovadoras en la categoría Others.
+Distribución por Familias de Cerveza
+
+**Ale **
+
+Es claramente su estilo predominante, con 3411 reseñas en esta categoría. Dentro de Ale, sus preferencias están bastante diversificadas, pero destacan:
+        
+   + Pale Ale (20%): mikesgroove disfruta de estilos más ligeros y equilibrados dentro de Ale.
+
+   + Strong Ale (19%): esta preferencia indica un gusto por cervezas robustas y con sabores intensos.
+
+   + IPA (18.3%): siendo un estilo muy popular entre los consumidores artesanales, esto revela una afinidad por cervezas con alto contenido de lúpulo y amargor.
+
+   + Stouts (14%): estas cervezas oscuras y malteadas también ocupan un lugar importante en su repertorio, lo que sugiere una apreciación por los sabores ricos y profundos.
+      
+**Lager**
+
+Con un 13.3% de sus reseñas dedicadas a las cervezas tipo Lager (562 reseñas), su interés por este tipo de cerveza es más moderado en comparación con las Ale, pero aun así notable.
+
+   + Pale Lager (48.2%): este es el estilo preferido dentro de esta categoría, lo que sugiere una inclinación por lagers más suaves y fáciles de beber.
+   
+   + Dark Lager (28.6%) y Bock (23.1%): estos estilos más oscuros y maltosos completan su interés por las Lager, lo que indica una preferencia también por opciones más ricas dentro de esta familia.
+
+**Others**
+
+La categoría Others representa el 6% de su total de reseñas (253 reseñas). En esta categoría las cervezas Specialty (87%) son predominantes, lo que implica que mikesgroove tiene un interés por cervezas innovadoras o ediciones limitadas.
+  
+
+**Conclusiones del Perfil de Consumo**
+
+   + Diversidad dentro de Ales: mikesgroove disfruta de una amplia variedad de estilos dentro de la familia Ale, desde Pale Ale más suaves hasta cervezas intensamente lupuladas como IPA, y cervezas oscuras como Stouts y Porters.
+    
+   + Interés moderado por Lagers: Aunque Ale domina su perfil, su aprecio por las Pale Lager muestra que también disfruta de cervezas más ligeras y refrescantes, mientras que las Dark Lager y Bock indican una búsqueda de mayor complejidad en este estilo.
+    
+   + Gusto por la innovación: La preferencia por cervezas Specialty en la categoría Others revela un consumidor curioso, dispuesto a probar cervezas fuera de lo convencional, ya sean experimentales o ediciones especiales.
+
+En resumen, mikesgroove es un consumidor que aprecia tanto la variedad como la calidad, con una clara inclinación por las cervezas Ale artesanales y un interés en cervezas innovadoras y exclusivas.
+
+\newpage
+
+## Perfil Común de los Usuarios BeerAdvocate
+
+Basándonos en los perfiles de los usuarios northyorksammy, BuckeyeNation, y mikesgroove, podemos identificar una serie de patrones y preferencias que nos permiten elaborar un perfil de consumidor cervecero común para estos foreros en BeerAdvocate. A continuación, destacamos las preferencias y las directrices de consumo en función de los tipos de cerveza, así como los estilos que comparten estos consumidores apasionados.
+
+Preferencias Comunes de los Usuarios
+
+   * Predominio de las Cervezas Ale: En todos los perfiles analizados, las Ales dominan el consumo, representando entre el 72% y 80% del total de sus reseñas. Esto sugiere que las Ales artesanales son la preferencia principal de estos usuarios, indicando una fuerte inclinación hacia estilos de cerveza con mayor complejidad de sabores, diferentes niveles de amargor, y una rica variedad de subestilos.Los estilos que destacan en todos los perfiles son:
+        
+        - Pale Ale: Aunque varía en proporción, el Pale Ale es un estilo recurrente, con porcentajes de entre el 20% y 25% de sus reseñas en Ales. Este estilo se caracteriza por su ligereza y equilibrio, lo que lo hace popular entre quienes buscan cervezas refrescantes pero con sabor.
+        
+        - Strong Ale: Este estilo robusto también es común, oscilando entre el 19% y 21% de las reseñas en Ales. Los usuarios parecen disfrutar de cervezas con mayor cuerpo y graduación alcohólica, lo que refleja una búsqueda de cervezas más intensas y complejas.
+      
+        - IPA: Las India Pale Ale son otro estilo ampliamente preferido, representando entre el 14% y 18% de las reseñas en Ales. Los usuarios de BeerAdvocate tienden a disfrutar de cervezas fuertemente lupuladas, con sabores cítricos y amargos pronunciados.
+        
+        - Stouts: Con proporciones de entre 10% y 14%, las cervezas oscuras tipo Stout son populares entre estos usuarios, lo que indica un gusto por cervezas más tostadas y maltosas, con perfiles de sabor que pueden incluir notas de café, chocolate y caramelo.
+
+   * Consumo Moderado de Lager: Aunque las cervezas Lager representan un porcentaje menor en comparación con las Ales, con consumos que oscilan entre el 13% y 20%, siguen teniendo un lugar en el perfil de estos consumidores. En particular, destacan los siguientes estilos:
+        
+        - Pale Lager: Este estilo representa la mayoría de las reseñas dentro de Lager, con porcentajes que varían entre el 48% y 57%, lo que sugiere que los usuarios prefieren Lager más ligeras y refrescantes para alternar con las Ales más complejas.
+        
+        - Dark Lager y Bock: Con un enfoque menor pero relevante (entre el 19% y 28%), los usuarios también aprecian cervezas Lager más oscuras y maltosas, lo que indica una búsqueda de riqueza y profundidad incluso dentro de esta categoría más ligera.
+
+   * Gusto por la Innovación en la Categoría "Others": En la categoría Others (que representa entre el 6-7% del total de sus reseñas), el estilo Specialty es el dominante. Estos usuarios tienden a disfrutar de cervezas experimentales y únicas, a menudo ediciones limitadas o cervezas innovadoras que no siguen los estilos tradicionales. Esto demuestra un espíritu curioso y una inclinación por probar nuevas experiencias cerveceras, lo que les convierte en consumidores sofisticados que valoran la creatividad de las cervecerías artesanales, razon por la que ocupan el top3 de revisores del foro.
+
+**Perfil Común del Consumidor de Cerveza:**
+
+**1. Perfil General:**
+
+  Exploradores Artesanales: Los usuarios comparten un perfil de consumidor curioso y aventurero que disfruta tanto de los sabores clásicos como de la experimentación. Se caracterizan por su preferencia por cervezas artesanales y de alta calidad, con una clara inclinación hacia las Ales.
+    
+  Apreciación por la Complejidad: Prefieren cervezas que ofrezcan una rica experiencia sensorial, desde los sabores amargos y lupulados de las IPAs hasta las notas profundas de las Stouts y Strong Ales.
+    
+  Diversidad dentro de una Misma Familia: Aunque las Ales son su familia favorita, dentro de esta categoría exploran un amplio abanico de estilos que va desde Pale Ales hasta cervezas más oscuras y malteadas.
+
+**2. Preferencias Específicas:**
+
+  Ales Lupuladas y Fuertes: Las IPAs, Strong Ales y Pale Ales son los estilos más preferidos. Esto refleja una búsqueda de sabores intensos, donde el lúpulo, la graduación alcohólica y el cuerpo juegan un papel clave en su disfrute.
+    
+  Cervezas Oscuras y Maltosas: Tanto las Stouts como las Porters y Brown Ales muestran que los consumidores disfrutan de perfiles de sabor más profundos, con notas tostadas y dulces.
+  
+  Cervezas Experimentales: La inclinación por cervezas Specialty en la categoría Others demuestra un gusto por lo exclusivo y lo innovador, posicionando a estos consumidores como líderes en la exploración de nuevas tendencias en la industria cervecera.
+
+**3. Segmento Lager:**
+
+  Aunque las Lagers tienen menos protagonismo, son una opción de consumo ocasional para estos usuarios, quienes prefieren las Pale Lagers como una alternativa ligera, manteniendo su interés por estilos más accesibles pero con una inclinación por las Dark Lagers y Bocks, lo que sugiere que incluso dentro de las Lager, valoran la complejidad.
+
+**Conclusión:**
+
+El perfil común de estos consumidores de BeerAdvocate revela a usuarios que valoran la diversidad y la complejidad en sus cervezas, con una fuerte inclinación hacia las Ales artesanales, especialmente aquellas con mayor cuerpo, sabor lupulado e intensidad. Al mismo tiempo, tienen un interés por la innovación y por probar cervezas experimentales, lo que les convierte en consumidores sofisticados que buscan constantemente nuevas experiencias en el mundo cervecero.
+
+\newpage
+
+# Conclusiones finales.
+
+El dataset Beer-Review contiene aproximadamente un millón y medio de reseñas de cervezas, con 13 atributos distintos. Los datos provienen del foro Beer Advocate, donde los usuarios evalúan las cervezas en base a cinco criterios clave: aroma, apariencia, paladar, sabor, y una nota final global. Además, el dataset incluye información adicional sobre el nombre de la cerveza, su valoración global, la tipología de la cerveza, el contenido de alcohol (ABV), así como el nombre del usuario que realizó la reseña y la empresa que produjo la cerveza.
+
+A continuación, se realiza un análisis detallado del comportamiento de los usuarios y cervezas, junto con un análisis de la competencia entre las empresas cerveceras en el mercado artesanal. También se examinan las preferencias específicas de los principales usuarios del foro y cómo estos influyen en la dinámica del mercado.
+
+**Descripción del Problema y Variables**
+
+El análisis parte de un dataset altamente diversificado, con 49.000 cervezas distintas, agrupadas en 104 subtipos, fabricadas por 5155 empresas diferentes. Este amplio abanico de cervezas ha sido evaluado por 32.908 usuarios, que utilizan un sistema de valoración basado en las variables mencionadas anteriormente: aroma, apariencia, paladar, sabor y la nota final. Estas variables son esenciales para entender cómo los consumidores valoran cada cerveza y cómo interactúan las diferentes categorías y subcategorías dentro del mercado cervecero artesanal.
+
+```{r}
+calcular_valores_cerveza(df)
+```
+
+
+**Atributos del dataset:**
+
+  + Nombre de la cerveza: Permite identificar cada producto único.
+
+  + Tipología de la cerveza: Clasificación según el tipo (IPA, Stout, Pale Ale, etc.).
+
+  + Graduación alcohólica (ABV): Proporción de alcohol en la cerveza.
+
+  + Atributos de sabor: Aroma, apariencia, paladar, sabor y la nota final proporcionan una evaluación integral.
+
+  + Información del usuario: El nombre del usuario que realizó la evaluación, lo que permite analizar sus preferencias y tendencias de consumo.
+  
+  + Nombre de la empresa productora: Facilita el análisis de las cervecerías que dominan el mercado.
+
+
+**Perfil de los Gustos de los Consumidores del Foro BeerAdvocate.**
+
+Para comprender el comportamiento de los consumidores de BeerAdvocate, es fundamental centrarse en el top 10 de cervezas más revisadas, ya que estas representan los productos que generan más interacción en el foro.
+
+El mercado de cervezas artesanales en este top 10 está dominado por las cervezas Ale, que representan el 90% del total de reseñas, destacando las categorías de IPA y Strong Ale:
+
+  * **1 India Pale Ale (IPA)**: Las IPA son las más populares, ocupando el 50% de las cervezas en el top 10. Estas cervezas destacan por sus perfiles intensamente lupulados, lo que refleja una clara preferencia de los consumidores por cervezas con un fuerte carácter amargo y cítrico. Las IPA representan el segmento más competido, con múltiples productores luchando por posicionar sus productos. Entre las cervezas IPA más destacadas en este ranking se encuentran la 90 Minute IPA de Dogfish Head Brewery y la Two Hearted Ale de Bell's Brewery.
+        Competencia en el segmento IPA: A pesar de la gran cantidad de competidores, Stone Brewing se destaca con dos cervezas en el top 10: Stone Ruination IPA y Stone IPA, lo que subraya su capacidad para sobresalir en un mercado saturado. El segmento está altamente fragmentado, con una fuerte competencia entre cervecerías clave como Stone Brewing, Dogfish Head y Bell’s Brewery.
+
+   * 2 **Strong Ale**: Estas cervezas robustas ocupan el 30% del top 10. Aunque la competencia en esta categoría es más equilibrada que en las IPA, no hay un claro líder en cuanto a dominancia de mercado, lo que indica que los consumidores se enfocan más en la marca específica en lugar de una ventaja competitiva marcada. Entre las cervezas Strong Ale más destacadas está la Arrogant Bastard Ale de Stone Brewing, que refuerza su presencia diversificada en este segmento.
+
+  * 3 **Dominio en solitario en Segmentos Específicos: Stouts y Pale Ale**
+
+      Dentro de otras categorías, el análisis revela la existencia de "monopolios" en dos estilos de cerveza:
+
+  - Old Rasputin Russian Imperial Stout de North Coast: Esta cerveza se destaca como la única representante de su categoría en el top 10.    La dominancia de la Old Rasputin indica que North Coast ha consolidado un producto insignia que captura la atención de los               consumidores que buscan cervezas intensas y complejas.
+
+  - Sierra Nevada Pale Ale: Sierra Nevada no solo ha logrado posicionarse como un líder en la categoría de Pale Ale, sino que su             presencia en el top 10 destaca su longevidad en el mercado. Aunque el estilo Pale Ale ha sido eclipsado en popularidad por las IPA en     años recientes, la Sierra Nevada Pale Ale sigue siendo una de las cervezas más revisadas. Además, la empresa tiene una posición          fuerte en IPA con su Celebration Ale.
+
+```{r}
+plot1 <-custom_barplot(df, beer_name, 10, "Reviews", "Type of Beers",
+" Top-10 most reviewed Beers")
+plot2 <-custom_barplot(top_ten_review,beer_types, 4, "Reviews", "Type of Beers",
+"Distribution subcategory Top-10 most reviewed")
+plot_grid(plot1, plot2, ncol = 1, rel_heights = c(2, 1))
+```
+
+```{r}
+plot1 <-stacked_barplot_custom (top_ten_review,"beer_types","brewery_name","n",
+"Top-10 Beer type & Brewery Distribution")
+plot2 <-plot_percentage_per_subcategory(top_ten_review, "beer_types",
+"brewery_name",
+"Market share of each brewery by type of beer Top-10")
+plot_grid(plot1, plot2, ncol = 1, rel_heights = c(1, 1))
+```
+
+**Análisis del Top 10 de Empresas Cerveceras**
+
+Un análisis de las empresas productoras revela que tres cervecerías dominan el mercado, cada una con una estrategia distinta que refleja su enfoque hacia el consumidor:
+
+  * Boston Beer Company (Samuel Adams): Esta empresa lidera en cuanto al número total de revisiones, pero su estrategia se basa en la diversificación de productos. Con un amplio catálogo que abarca múltiples categorías, Boston Beer no depende de una cerveza específica, sino que apuesta por mantener una fuerte presencia en diversas categorías sin sobresalir en ninguna en particular. Esto le otorga estabilidad y reconocimiento.
+
+  * Dogfish Head Brewery: Aunque tiene un enfoque diversificado similar a Boston Beer, Dogfish Head basa su éxito principalmente en cinco productos, con la 90 Minute IPA como su principal estrella. Su catálogo es amplio, pero la mayor parte de sus reseñas provienen de unas pocas cervezas estrella. Su enfoque en cervezas de alta intensidad alcohólica y sabores audaces le permite destacar en el segmento de IPA.
+
+  * Stone Brewing Co.: Stone Brewing se diferencia por su enfoque en un catálogo reducido pero altamente competitivo. Con un fuerte posicionamiento en el mercado de IPA y Strong Ale, sus cervezas estrella, como Stone Ruination IPA y Arrogant Bastard Ale, dominan las reseñas, lo que refleja una estrategia clara de especialización en productos de alta demanda.
+  
+```{r}
+p1 <- donut_total (Boston_Beer_prod, title = "Boston_Beer")
+p2 <- donut_total(Dogfish_Head_Brewery,"Dogfish_Head")
+p3 <- donut_total(Stone_Brewing_Co_products,"Stone_Brewing")
+plot_grid(p1, p2,p3,  ncol = 3, rel_heights = c(2, 2))
+```
+
+
+**Análisis de los Gustos de los Principales Usuarios del Foro**
+
+Finalmente, se realiza un análisis de los gustos de los top 3 de revisores del foro (northyorksammy, BuckeyeNation, y mikesgroove), para identificar tendencias en el consumo y reseñas.
+Preferencias de los Usuarios
+
+  * Ales: El 72% al 80% de las reseñas de estos usuarios corresponden a cervezas Ale, lo que confirma la preferencia general por cervezas     de mayor complejidad de sabor. Dentro de este grupo, los estilos más populares son:
+        
+  - IPA: Representan entre el 14% y el 18% de sus reseñas. Los usuarios parecen preferir cervezas con perfiles lupulados y amargos,        reflejando el gusto por este estilo dominante.
+        
+  - Strong Ale: Con un 19% al 21% de las reseñas, los Strong Ale son también altamente valorados por estos usuarios, lo que indica una     preferencia por cervezas más robustas y alcohólicas.
+        
+  - Stouts: Representan entre el 10% y el 14% de sus reseñas, mostrando una tendencia hacia cervezas más oscuras y tostadas.
+
+  * Lager: Aunque las cervezas Lager tienen una menor presencia (13%-20% del total de reseñas), siguen siendo apreciadas, en particular    las Pale Lager y Dark Lager.
+  
+  * Others: En esta categoría las cervezas Specialty son predominantes, lo que implica un interés por cervezas innovadoras o ediciones limitadas.
+
+El perfil típico de los consumidores de BeerAdvocate refleja a usuarios que aprecian la variedad y la riqueza en sus cervezas, mostrando una clara preferencia por las Ales artesanales, especialmente aquellas más robustas, con sabores intensamente lupulados y complejos. Además, demuestran un interés constante en la innovación, explorando cervezas experimentales, lo que los posiciona como consumidores exigentes y sofisticados, siempre en busca de descubrir nuevas experiencias dentro del universo cervecero.
+
+\newpage
+
+# Bibliografia.
+
+M.Nachel. Beer for dummies. Ed Wiley 2nd Edition.
+
+https://www.beeradvocate.com/beer/styles/
+
+https://www.academia.edu/36415855/An%C3%A1lisis_de_Dataset_Beer_Reviews
+
+https://www.ahoulette.com/2019/03/11/beer-advocate-reviews/
+
+https://www.kaggle.com/athoul01/analysis-of-beer-advocate-reviews-dataset
+
+https://rpubs.com/arangnek/322253
+
+https://mohitatgithub.github.io/2018-03-20-Building-a-Beer-Recommendation-System/
+
+https://plotnine.readthedocs.io/en/stable/tutorials/miscellaneous-show-counts-and-percentages-for-bar-plots.html
+
+https://www.ngenespanol.com/tips/guia-diferentes-tipos-de-cerveza/
+
+https://www.clasificacionde.org/tipos-de-cerveza/
+
+https://www.brewersfriend.com/2009/01/04/beer-styles-alcohol-by-volume-bar-graph/
+
+https://installbeer.com/blogs/diariocervecero/que-son-los-ibus-cerveza
+
+https://stackoverflow.com/questions/50004058/multiple-dependent-level-sunburst-doughnut-chart-using-ggplot2
+
+https://www.brewersassociation.org/directories/breweries/
