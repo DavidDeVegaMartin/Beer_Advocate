@@ -1,6 +1,6 @@
-#** Beer_Advocate**
+#**Beer_Advocate**
 
-** This repository is an evolution of a practical assignment for the Data Mining course in the Data Science Master’s program at the Open University of Catalonia (UOC)**
+**This repository is an evolution of a practical assignment for the Data Mining course in the Data Science Master’s program at the Open University of Catalonia (UOC)**
 
 ![Portrait](Images/1.png)
 ![Resume Dataset](Images/2.png)
